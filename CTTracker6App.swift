@@ -10,6 +10,9 @@ import Combine
 import Foundation
 import Security
 import Compression
+import UserNotifications
+import WeatherKit
+import CoreLocation
 
 // MARK: - Global App State
 final class AppState: ObservableObject {
@@ -429,6 +432,139 @@ struct StationsScreen: View {
     }
 }
 
+// MARK: - Insights View
+struct InsightsView: View {
+    @State private var stats: (checksThisWeek: Int, mostCommonRoute: String?) = (0, nil)
+    @State private var co2Savings: (trips: Int, co2SavedLbs: Double) = (0, 0.0)
+    @State private var patterns: [CommutePattern] = []
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("\(stats.checksThisWeek)")
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(.green)
+                            Text("Checks this week")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "calendar")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.green.opacity(0.5))
+                    }
+
+                    if let route = stats.mostCommonRoute {
+                        Text("Most common: **\(route)**")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+            } header: {
+                Text("This Week")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("\(co2Savings.trips)")
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(.blue)
+                            Text("Trips this month")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "leaf.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.green.opacity(0.6))
+                    }
+
+                    HStack(spacing: 4) {
+                        Text("~**\(Int(co2Savings.co2SavedLbs)) lbs**")
+                            .font(.headline)
+                            .foregroundStyle(.green)
+                        Text("CO₂ saved vs. driving")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+            } header: {
+                Text("Environmental Impact")
+            } footer: {
+                Text("Based on average car emissions of 0.89 lbs CO₂ per mile")
+                    .font(.caption2)
+            }
+
+            if !patterns.isEmpty {
+                Section {
+                    ForEach(patterns.prefix(3), id: \.fromStopCode) { pattern in
+                        VStack(alignment: .leading, spacing: 6) {
+                            let fromName = CaltrainStops.northbound.first { $0.stopCode == pattern.fromStopCode }?.name ?? "Unknown"
+                            let toName = CaltrainStops.northbound.first { $0.stopCode == pattern.toStopCode }?.name ?? "Unknown"
+
+                            HStack {
+                                Text("\(fromName) → \(toName)")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(pattern.frequency)x")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !pattern.commonHours.isEmpty {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "clock")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("Usually around " + pattern.commonHours.sorted().map { String(format: "%d:00", $0) }.joined(separator: ", "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Your Commute Patterns")
+                } footer: {
+                    Text("Based on your usage history (stored locally)")
+                        .font(.caption2)
+                }
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    CommuteHistoryStorage.shared.clearHistory()
+                    loadStats()
+                } label: {
+                    Label("Clear History", systemImage: "trash")
+                }
+            } footer: {
+                Text("All data is stored locally on your device. Clearing history will reset insights and patterns.")
+                    .font(.caption2)
+            }
+        }
+        .navigationTitle("Commute Insights")
+        .navigationBarTitleDisplayMode(.large)
+        .onAppear {
+            loadStats()
+        }
+    }
+
+    private func loadStats() {
+        stats = CommuteHistoryStorage.shared.getWeeklyStats()
+        co2Savings = CommuteHistoryStorage.shared.calculateCO2Savings()
+        patterns = CommuteHistoryStorage.shared.analyzePatterns()
+    }
+}
+
 // MARK: - Settings
 struct SettingsScreen: View {
     @EnvironmentObject private var app: AppState
@@ -438,6 +574,7 @@ struct SettingsScreen: View {
     @State private var statusTicketmaster: String = ""
     @State private var status511Color: Color = .secondary
     @State private var statusTicketmasterColor: Color = .secondary
+    @StateObject private var notificationManager = SmartNotificationManager.shared
 
     var body: some View {
         NavigationStack {
@@ -506,6 +643,30 @@ struct SettingsScreen: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Section("Smart Features") {
+                    Toggle(isOn: Binding(
+                        get: { notificationManager.notificationsEnabled },
+                        set: { enabled in
+                            if enabled && !notificationManager.notificationsEnabled {
+                                notificationManager.requestPermission()
+                            } else if !enabled {
+                                // Open Settings to disable
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                        }
+                    )) {
+                        Label("Smart Notifications", systemImage: "bell.badge")
+                    }
+
+                    NavigationLink {
+                        InsightsView()
+                    } label: {
+                        Label("Commute Insights", systemImage: "chart.bar")
+                    }
+                }
+
                 Section {
                     NavigationLink {
                         AboutScreen()
@@ -663,6 +824,9 @@ struct TrainsScreen: View {
     @State private var south: [Departure] = []
     @State private var loading = false
     @State private var error: String?
+    @State private var showNotificationPrompt = false
+    @StateObject private var weatherService = WeatherService.shared
+    @StateObject private var notificationManager = SmartNotificationManager.shared
 
     private var northboundStop: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -706,11 +870,36 @@ struct TrainsScreen: View {
                         }
                     }
 
-                    Section("Northbound from \(northboundStop.name)") {
+                    Section {
                         ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name) }
+                    } header: {
+                        HStack {
+                            Text("Northbound from \(northboundStop.name)")
+                            Spacer()
+                            if let weather = weatherService.currentWeather[southboundStopCode] {
+                                HStack(spacing: 4) {
+                                    Text(weatherService.getWeatherEmoji(for: weather.symbol))
+                                    Text("\(Int(weather.temp))°F at \(southboundStop.name)")
+                                        .font(.caption)
+                                }
+                            }
+                        }
                     }
-                    Section("Southbound from \(southboundStop.name)") {
+
+                    Section {
                         ForEach(south) { DepartureRow(dep: $0, destinationLabel: northboundStop.name) }
+                    } header: {
+                        HStack {
+                            Text("Southbound from \(southboundStop.name)")
+                            Spacer()
+                            if let weather = weatherService.currentWeather[northboundStopCode] {
+                                HStack(spacing: 4) {
+                                    Text(weatherService.getWeatherEmoji(for: weather.symbol))
+                                    Text("\(Int(weather.temp))°F at \(northboundStop.name)")
+                                        .font(.caption)
+                                }
+                            }
+                        }
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -725,8 +914,17 @@ struct TrainsScreen: View {
                         .frame(width: 32, height: 32)
                 }
             }
-            .task { await load() } // initial fetch
-            .onChange(of: refDate, initial: false) { _, _ in // iOS 17 two-arg
+            .task {
+                await load()
+
+                // Request notification permission on first launch
+                if !notificationManager.hasRequestedPermission {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        showNotificationPrompt = true
+                    }
+                }
+            }
+            .onChange(of: refDate, initial: false) { _, _ in
                 Task { await load() }
             }
             .onChange(of: northboundStopCode, initial: false) { _, _ in
@@ -734,6 +932,16 @@ struct TrainsScreen: View {
             }
             .onChange(of: southboundStopCode, initial: false) { _, _ in
                 Task { await load() }
+            }
+            .alert("Enable Smart Notifications?", isPresented: $showNotificationPrompt) {
+                Button("Enable") {
+                    notificationManager.requestPermission()
+                }
+                Button("Not Now", role: .cancel) {
+                    UserDefaults.standard.set(true, forKey: "hasRequestedNotifications")
+                }
+            } message: {
+                Text("Get notified about your usual trains, delays, and Giants game crowding.")
             }
         }
     }
@@ -763,6 +971,23 @@ struct TrainsScreen: View {
             north = mergeScheduledWithRealtime(scheduled: nScheduled, realtime: nRealtime)
             south = mergeScheduledWithRealtime(scheduled: sScheduled, realtime: sRealtime)
             sharedAlerts = a
+
+            // Record usage history for pattern learning
+            CommuteHistoryStorage.shared.recordCheck(
+                fromStopCode: northboundStopCode,
+                toStopCode: southboundStopCode,
+                direction: "North"
+            )
+            CommuteHistoryStorage.shared.recordCheck(
+                fromStopCode: southboundStopCode,
+                toStopCode: northboundStopCode,
+                direction: "South"
+            )
+
+            // Fetch weather for destination stations
+            await weatherService.fetchWeather(for: northboundStop)
+            await weatherService.fetchWeather(for: southboundStop)
+
         } catch {
             self.error = (error as NSError).localizedDescription
             print("❌ Error loading trains: \(error)")
@@ -1304,6 +1529,273 @@ class CommuteStorage {
     func save(_ commutes: [SavedCommute]) {
         if let data = try? JSONEncoder().encode(commutes) {
             UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+}
+
+// MARK: - Commute History & Pattern Learning
+struct CommuteHistoryEntry: Codable, Identifiable {
+    let id: UUID
+    let timestamp: Date
+    let fromStopCode: String
+    let toStopCode: String
+    let direction: String // "North" or "South"
+    let timeOfDay: Int // Hour of day (0-23)
+    let dayOfWeek: Int // 1=Sunday, 7=Saturday
+
+    init(fromStopCode: String, toStopCode: String, direction: String) {
+        self.id = UUID()
+        self.timestamp = Date()
+        self.fromStopCode = fromStopCode
+        self.toStopCode = toStopCode
+        self.direction = direction
+
+        let calendar = Calendar.current
+        self.timeOfDay = calendar.component(.hour, from: timestamp)
+        self.dayOfWeek = calendar.component(.weekday, from: timestamp)
+    }
+}
+
+struct CommutePattern: Codable {
+    let fromStopCode: String
+    let toStopCode: String
+    let direction: String
+    let commonHours: [Int] // Hours user typically checks this route
+    let frequency: Int // Number of times checked
+    let lastUsed: Date
+}
+
+class CommuteHistoryStorage {
+    static let shared = CommuteHistoryStorage()
+    private let historyKey = "commuteHistory"
+    private let maxHistoryEntries = 500 // Keep last 500 checks
+
+    func recordCheck(fromStopCode: String, toStopCode: String, direction: String) {
+        var history = loadHistory()
+        let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction)
+        history.append(entry)
+
+        // Keep only recent entries
+        if history.count > maxHistoryEntries {
+            history = Array(history.suffix(maxHistoryEntries))
+        }
+
+        saveHistory(history)
+    }
+
+    func loadHistory() -> [CommuteHistoryEntry] {
+        guard let data = UserDefaults.standard.data(forKey: historyKey),
+              let history = try? JSONDecoder().decode([CommuteHistoryEntry].self, from: data) else {
+            return []
+        }
+        return history
+    }
+
+    private func saveHistory(_ history: [CommuteHistoryEntry]) {
+        if let data = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(data, forKey: historyKey)
+        }
+    }
+
+    func clearHistory() {
+        UserDefaults.standard.removeObject(forKey: historyKey)
+    }
+
+    // Analyze patterns to find user's regular commutes
+    func analyzePatterns() -> [CommutePattern] {
+        let history = loadHistory()
+        guard !history.isEmpty else { return [] }
+
+        // Group by route (from-to-direction)
+        var routeCounts: [String: [CommuteHistoryEntry]] = [:]
+        for entry in history {
+            let key = "\(entry.fromStopCode)-\(entry.toStopCode)-\(entry.direction)"
+            routeCounts[key, default: []].append(entry)
+        }
+
+        // Find patterns for routes checked 3+ times
+        return routeCounts.compactMap { key, entries in
+            guard entries.count >= 3 else { return nil }
+
+            let parts = key.split(separator: "-")
+            guard parts.count == 3 else { return nil }
+
+            // Find common hours (hours when this route is checked most)
+            let hourCounts = Dictionary(grouping: entries, by: { $0.timeOfDay })
+                .mapValues { $0.count }
+                .sorted { $0.value > $1.value }
+                .prefix(3)
+                .map { $0.key }
+
+            return CommutePattern(
+                fromStopCode: String(parts[0]),
+                toStopCode: String(parts[1]),
+                direction: String(parts[2]),
+                commonHours: hourCounts,
+                frequency: entries.count,
+                lastUsed: entries.map { $0.timestamp }.max() ?? Date()
+            )
+        }.sorted { $0.frequency > $1.frequency }
+    }
+
+    // Calculate CO2 savings
+    func calculateCO2Savings() -> (trips: Int, co2SavedLbs: Double) {
+        let history = loadHistory()
+
+        // Filter to last 30 days
+        let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
+        let recentTrips = history.filter { $0.timestamp >= thirtyDaysAgo }
+
+        // Average Caltrain trip ~25 miles, car emits ~0.89 lbs CO2/mile
+        // So each train trip saves ~22 lbs CO2
+        let co2PerTrip = 22.0
+        let totalSaved = Double(recentTrips.count) * co2PerTrip
+
+        return (trips: recentTrips.count, co2SavedLbs: totalSaved)
+    }
+
+    // Get weekly stats
+    func getWeeklyStats() -> (checksThisWeek: Int, mostCommonRoute: String?) {
+        let history = loadHistory()
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        let weekHistory = history.filter { $0.timestamp >= weekAgo }
+
+        let routeCounts = Dictionary(grouping: weekHistory, by: { "\($0.fromStopCode)-\($0.toStopCode)" })
+            .mapValues { $0.count }
+            .sorted { $0.value > $1.value }
+
+        let mostCommon = routeCounts.first.map { from_to, _ in
+            let parts = from_to.split(separator: "-")
+            let fromName = CaltrainStops.northbound.first { $0.stopCode == String(parts[0]) }?.name ?? "Unknown"
+            let toName = CaltrainStops.northbound.first { $0.stopCode == String(parts[1]) }?.name ?? "Unknown"
+            return "\(fromName) → \(toName)"
+        }
+
+        return (checksThisWeek: weekHistory.count, mostCommonRoute: mostCommon)
+    }
+}
+
+// MARK: - Smart Notifications
+class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+    static let shared = SmartNotificationManager()
+    @Published var notificationsEnabled = false
+    @Published var hasRequestedPermission = false
+
+    override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+        checkPermissionStatus()
+    }
+
+    func checkPermissionStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                self.notificationsEnabled = settings.authorizationStatus == .authorized
+                self.hasRequestedPermission = settings.authorizationStatus != .notDetermined
+            }
+        }
+    }
+
+    func requestPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            DispatchQueue.main.async {
+                self.notificationsEnabled = granted
+                self.hasRequestedPermission = true
+                UserDefaults.standard.set(true, forKey: "hasRequestedNotifications")
+            }
+        }
+    }
+
+    // Schedule notification for usual train departing soon
+    func scheduleUsualTrainNotification(trainTime: Date, fromStation: String, toStation: String, minutes: Int) {
+        guard notificationsEnabled else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Your Usual Train"
+        content.body = "The \(trainTime.formatted(date: .omitted, time: .shortened)) train from \(fromStation) to \(toStation) departs in \(minutes) minutes"
+        content.sound = .default
+
+        // Trigger 15 minutes before departure
+        let triggerDate = Calendar.current.date(byAdding: .minute, value: -(15), to: trainTime)!
+        let components = Calendar.current.dateComponents([.hour, .minute], from: triggerDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+
+        let request = UNNotificationRequest(identifier: "usualTrain-\(UUID().uuidString)", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // Send notification for Giants game crowding
+    func notifyGiantsGameCrowding(gameTime: String) {
+        guard notificationsEnabled else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Giants Game Today ⚾"
+        content.body = "Expect crowded trains after \(gameTime). Plan extra time for your commute."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: "giantsGame-\(UUID().uuidString)", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // Send notification for service alerts
+    func notifyServiceAlert(alert: ServiceAlert) {
+        guard notificationsEnabled else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Caltrain Service Alert"
+        content.body = alert.summary
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: "alert-\(alert.id)", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // UNUserNotificationCenterDelegate methods
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        return [.banner, .sound]
+    }
+}
+
+// MARK: - Weather Service
+@MainActor
+class WeatherService: ObservableObject {
+    static let shared = WeatherService()
+    private let weatherService = WeatherKit.WeatherService()
+    @Published var currentWeather: [String: (temp: Double, condition: String, symbol: String)] = [:]
+
+    func fetchWeather(for station: CaltrainStop) async {
+        let location = CLLocation(latitude: station.latitude, longitude: station.longitude)
+
+        do {
+            let weather = try await weatherService.weather(for: location)
+            // Convert Celsius to Fahrenheit
+            let tempCelsius = weather.currentWeather.temperature.value
+            let tempFahrenheit = (tempCelsius * 9/5) + 32
+            let condition = weather.currentWeather.condition.description
+            let symbol = weather.currentWeather.symbolName
+
+            currentWeather[station.stopCode] = (temp: tempFahrenheit, condition: condition, symbol: symbol)
+        } catch {
+            print("❌ Weather fetch failed: \(error.localizedDescription)")
+        }
+    }
+
+    func getWeatherEmoji(for symbolName: String) -> String {
+        // Map SF Symbol names to emoji
+        if symbolName.contains("cloud.rain") || symbolName.contains("rain") {
+            return "🌧️"
+        } else if symbolName.contains("cloud") {
+            return "☁️"
+        } else if symbolName.contains("sun") {
+            return "☀️"
+        } else if symbolName.contains("snow") {
+            return "❄️"
+        } else if symbolName.contains("wind") {
+            return "💨"
+        } else {
+            return "🌤️"
         }
     }
 }

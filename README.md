@@ -16,6 +16,7 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
 - **Time picker** to check departures at any future time - shows full schedule, not just real-time trains
+- **Weather at destination** - see current conditions and temperature where you're headed
 - Service alerts displayed when active and highlighted at top of screen
 - Automatic GTFS feed updates (24-hour cache)
 
@@ -45,9 +46,23 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Supports all 27 Caltrain stations from Gilroy to San Francisco
 - Visual route preview with northbound/southbound indicators
 
+### 🧠 Smart Features
+- **Smart Notifications** - opt-in alerts for:
+  - Your usual trains departing soon
+  - Service delays on your regular routes
+  - Giants game crowding warnings
+- **Commute Insights** - track your usage with:
+  - Weekly stats on train checks
+  - Pattern detection (learns your regular routes and times)
+  - CO₂ savings calculator (vs. driving)
+  - Environmental impact tracking
+- **Privacy-first** - all data stored locally on device, never uploaded
+
 ### ⚙️ Settings
 - Secure API key management for 511.org and Ticketmaster
 - All credentials stored in iOS Keychain
+- Smart notification toggle
+- Commute insights and statistics
 - About page with data attribution and compliance info
 
 ## Setup
