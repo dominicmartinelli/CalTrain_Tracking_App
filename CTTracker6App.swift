@@ -539,7 +539,7 @@ struct InsightsView: View {
 
             if !patterns.isEmpty {
                 Section {
-                    ForEach(patterns.prefix(3), id: \.fromStopCode) { pattern in
+                    ForEach(patterns.prefix(3)) { pattern in
                         VStack(alignment: .leading, spacing: 6) {
                             let allStops = CaltrainStops.northbound + CaltrainStops.southbound
                             let fromName = allStops.first { $0.stopCode == pattern.fromStopCode }?.name ?? "Unknown"
@@ -1691,7 +1691,8 @@ struct CommuteHistoryEntry: Codable, Identifiable {
     }
 }
 
-struct CommutePattern: Codable {
+struct CommutePattern: Codable, Identifiable {
+    var id: String { "\(fromStopCode)-\(toStopCode)-\(direction)" }
     let fromStopCode: String
     let toStopCode: String
     let direction: String
