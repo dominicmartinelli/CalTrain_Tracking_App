@@ -778,41 +778,17 @@ struct EventsScreen: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Filter controls
-                if !events.isEmpty {
-                    VStack(spacing: 12) {
-                        Picker("Station", selection: $selectedStation) {
-                            ForEach(allStationNames, id: \.self) { station in
-                                Text(station).tag(station)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        if selectedStation != "All Stations" {
-                            HStack {
-                                Text("Max Distance:")
-                                    .font(.subheadline)
-                                Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
-                                Text("\(String(format: "%.1f", maxDistance)) mi")
-                                    .font(.subheadline)
-                                    .frame(width: 50)
-                            }
-                        }
+            Group {
+                if loading {
+                    ProgressView("Loading events…")
+                } else if let error {
+                    VStack {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .padding()
+                            .textSelection(.enabled)
                     }
-                    .padding()
-                    .background(Color(.secondarySystemBackground))
-                }
-
-                if loading { ProgressView("Loading events…").padding() }
-                if let error {
-                    Text(error)
-                        .foregroundStyle(.red)
-                        .padding()
-                        .textSelection(.enabled)
-                }
-
-                if events.isEmpty && !loading && error == nil {
+                } else if events.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "calendar.badge.exclamationmark")
                             .font(.system(size: 60))
@@ -824,15 +800,6 @@ struct EventsScreen: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                }
-
-                if !filteredEvents.isEmpty {
-                    List {
-                        ForEach(filteredEvents) { event in
-                            EventRow(event: event)
-                        }
-                    }
-                    .listStyle(.insetGrouped)
                 } else if !events.isEmpty && filteredEvents.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "mappin.slash")
@@ -846,9 +813,43 @@ struct EventsScreen: View {
                             .multilineTextAlignment(.center)
                     }
                     .padding()
-                }
+                } else {
+                    List {
+                        // Filter controls as first section
+                        Section {
+                            Picker("Filter by Station", selection: $selectedStation) {
+                                ForEach(allStationNames, id: \.self) { station in
+                                    Text(station).tag(station)
+                                }
+                            }
 
-                Spacer()
+                            if selectedStation != "All Stations" {
+                                HStack {
+                                    Text("Max Distance")
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", maxDistance)) mi")
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
+                            }
+                        }
+
+                        // Events section
+                        Section {
+                            ForEach(filteredEvents) { event in
+                                EventRow(event: event)
+                            }
+                        } header: {
+                            if selectedStation == "All Stations" {
+                                Text("All Events Today")
+                            } else {
+                                Text("Events near \(selectedStation)")
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
             }
             .navigationTitle("Bay Area Events")
             .toolbar {
