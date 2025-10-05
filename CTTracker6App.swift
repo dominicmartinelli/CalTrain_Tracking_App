@@ -1156,17 +1156,31 @@ struct SIRIService {
 // MARK: - Ticketmaster API
 struct TicketmasterService {
     static func searchEvents(apiKey: String, city: String = "San Francisco", radius: String = "50") async throws -> [BayAreaEvent] {
+        // Get today's date in ISO format (YYYY-MM-DD)
+        let today = Date.now
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: today)
+        let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
+
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withFullDate]
+        let startDateTime = dateFormatter.string(from: startOfToday) + "T00:00:00Z"
+        let endDateTime = dateFormatter.string(from: endOfToday) + "T00:00:00Z"
+
         var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json")!
         comps.queryItems = [
             .init(name: "apikey", value: apiKey),
             .init(name: "city", value: city),
             .init(name: "radius", value: radius),
             .init(name: "unit", value: "miles"),
-            .init(name: "size", value: "20"),
+            .init(name: "startDateTime", value: startDateTime),
+            .init(name: "endDateTime", value: endDateTime),
+            .init(name: "size", value: "100"),
             .init(name: "sort", value: "date,asc")
         ]
 
-        print("🎟️ Fetching Ticketmaster events from: \(comps.url!)")
+        print("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
+        print("🎟️ URL: \(comps.url!)")
         let (data, http) = try await HTTPClient.shared.get(url: comps.url!)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
