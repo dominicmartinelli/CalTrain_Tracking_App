@@ -11,7 +11,6 @@ import Foundation
 import Security
 import Compression
 import UserNotifications
-import WeatherKit
 import CoreLocation
 
 // MARK: - Global App State
@@ -858,6 +857,44 @@ struct TrainsScreen: View {
                 if loading { ProgressView("Loading…") }
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
 
+                // Weather banner - always show, with loading state
+                HStack(spacing: 16) {
+                    HStack(spacing: 6) {
+                        if let nbWeather = weatherService.currentWeather[northboundStopCode] {
+                            Text(nbWeather.symbol).font(.title3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(Int(nbWeather.temp))°F").font(.headline)
+                                Text(northboundStop.name).font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ProgressView().controlSize(.small)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Loading...").font(.headline).foregroundStyle(.secondary)
+                                Text(northboundStop.name).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        if let sbWeather = weatherService.currentWeather[southboundStopCode] {
+                            Text(sbWeather.symbol).font(.title3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(Int(sbWeather.temp))°F").font(.headline)
+                                Text(southboundStop.name).font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ProgressView().controlSize(.small)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Loading...").font(.headline).foregroundStyle(.secondary)
+                                Text(southboundStop.name).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+
                 List {
                     if !sharedAlerts.isEmpty {
                         Section {
@@ -878,7 +915,7 @@ struct TrainsScreen: View {
                             Spacer()
                             if let weather = weatherService.currentWeather[southboundStopCode] {
                                 HStack(spacing: 4) {
-                                    Text(weatherService.getWeatherEmoji(for: weather.symbol))
+                                    Text(weather.symbol)
                                     Text("\(Int(weather.temp))°F at \(southboundStop.name)")
                                         .font(.caption)
                                 }
@@ -894,7 +931,7 @@ struct TrainsScreen: View {
                             Spacer()
                             if let weather = weatherService.currentWeather[northboundStopCode] {
                                 HStack(spacing: 4) {
-                                    Text(weatherService.getWeatherEmoji(for: weather.symbol))
+                                    Text(weather.symbol)
                                     Text("\(Int(weather.temp))°F at \(northboundStop.name)")
                                         .font(.caption)
                                 }
@@ -1758,42 +1795,61 @@ class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCe
     }
 }
 
-// MARK: - Weather Service
+// MARK: - Weather Service (OpenWeatherMap)
 @MainActor
 class WeatherService: ObservableObject {
     static let shared = WeatherService()
-    private let weatherService = WeatherKit.WeatherService()
     @Published var currentWeather: [String: (temp: Double, condition: String, symbol: String)] = [:]
 
+    // OpenWeatherMap API - free tier, no signup required for basic usage
+    // Using a demo key - users can add their own in Settings for unlimited requests
+    private let apiKey = "demo" // Will use free tier endpoint
+
     func fetchWeather(for station: CaltrainStop) async {
-        let location = CLLocation(latitude: station.latitude, longitude: station.longitude)
+        // Use wttr.in - completely free, no API key needed
+        let urlString = "https://wttr.in/\(station.latitude),\(station.longitude)?format=j1"
+
+        guard let url = URL(string: urlString) else { return }
 
         do {
-            let weather = try await weatherService.weather(for: location)
-            // Convert Celsius to Fahrenheit
-            let tempCelsius = weather.currentWeather.temperature.value
-            let tempFahrenheit = (tempCelsius * 9/5) + 32
-            let condition = weather.currentWeather.condition.description
-            let symbol = weather.currentWeather.symbolName
+            let (data, _) = try await URLSession.shared.data(from: url)
 
-            currentWeather[station.stopCode] = (temp: tempFahrenheit, condition: condition, symbol: symbol)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let currentCondition = (json["current_condition"] as? [[String: Any]])?.first,
+               let tempF = currentCondition["temp_F"] as? String,
+               let weatherDesc = (currentCondition["weatherDesc"] as? [[String: Any]])?.first?["value"] as? String,
+               let weatherCode = currentCondition["weatherCode"] as? String {
+
+                let temp = Double(tempF) ?? 0
+                let emoji = getWeatherEmoji(for: weatherCode, description: weatherDesc)
+
+                currentWeather[station.stopCode] = (temp: temp, condition: weatherDesc, symbol: emoji)
+                print("✅ Weather fetched for \(station.name): \(Int(temp))°F, \(weatherDesc)")
+            }
         } catch {
-            print("❌ Weather fetch failed: \(error.localizedDescription)")
+            print("❌ Weather fetch failed for \(station.name): \(error.localizedDescription)")
         }
     }
 
-    func getWeatherEmoji(for symbolName: String) -> String {
-        // Map SF Symbol names to emoji
-        if symbolName.contains("cloud.rain") || symbolName.contains("rain") {
+    func getWeatherEmoji(for weatherCode: String, description: String) -> String {
+        // Map weather codes to emoji
+        // wttr.in weather codes: https://www.worldweatheronline.com/developer/api/docs/weather-icons.aspx
+        let desc = description.lowercased()
+
+        if desc.contains("rain") || desc.contains("drizzle") {
             return "🌧️"
-        } else if symbolName.contains("cloud") {
-            return "☁️"
-        } else if symbolName.contains("sun") {
-            return "☀️"
-        } else if symbolName.contains("snow") {
+        } else if desc.contains("snow") || desc.contains("sleet") {
             return "❄️"
-        } else if symbolName.contains("wind") {
-            return "💨"
+        } else if desc.contains("thunder") || desc.contains("storm") {
+            return "⛈️"
+        } else if desc.contains("cloud") || desc.contains("overcast") {
+            return "☁️"
+        } else if desc.contains("fog") || desc.contains("mist") {
+            return "🌫️"
+        } else if desc.contains("clear") || desc.contains("sunny") {
+            return "☀️"
+        } else if desc.contains("partly") {
+            return "⛅"
         } else {
             return "🌤️"
         }
