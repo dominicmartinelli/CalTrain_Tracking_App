@@ -1,9 +1,9 @@
-// Caltrain + Giants Checker (iOS 17+, single file)
+// Caltrain Tracking App (iOS 17+, single file)
 // - Single @main app file
 // - Uses .task { } + iOS17 .onChange(of:initial:) (no .task(id:) ambiguity)
 // - Robust 511 SIRI decode (wrapped/bare root, array/single deliveries, String/[String] destination)
 // - Keychain-backed API key gate with full-screen cover
-// - Giants home-game indicator via MLB Stats API
+// - Bay Area events via Ticketmaster Discovery API
 
 import SwiftUI
 import Combine
@@ -493,10 +493,10 @@ struct AboutScreen: View {
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Baseball Data")
+                        Text("Events Data")
                             .font(.subheadline)
                             .fontWeight(.semibold)
-                        Text("Provided by MLB Stats API")
+                        Text("Provided by Ticketmaster Discovery API")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
