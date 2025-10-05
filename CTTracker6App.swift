@@ -9,6 +9,7 @@ import SwiftUI
 import Combine
 import Foundation
 import Security
+import Compression
 
 // MARK: - Global App State
 final class AppState: ObservableObject {
@@ -186,21 +187,25 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $tab) {
             TrainsScreen(sharedAlerts: $alerts)
-                .tabItem { Label("Trains", systemImage: "train.side.front.car") }.tag(0)
+                .tabItem { Label("Trains", systemImage: "train.side.front.car") }
+                .tag(0)
             EventsScreen()
-                .tabItem { Label("Events", systemImage: "calendar") }.tag(1)
+                .tabItem { Label("Events", systemImage: "calendar") }
+                .tag(1)
             AlertsScreen(alerts: $alerts, isLoading: $alertsLoading)
                 .tabItem {
                     Label("Alerts", systemImage: alerts.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
-                .badge(alerts.count)
+                .badge(alerts.isEmpty ? 0 : alerts.count)
                 .tag(2)
             StationsScreen()
-                .tabItem { Label("Stations", systemImage: "mappin.and.ellipse") }.tag(3)
+                .tabItem { Label("Stations", systemImage: "mappin.and.ellipse") }
+                .tag(3)
             SettingsScreen()
-                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(4)
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(4)
         }
-        .tint(alerts.isEmpty ? .green : .red)
+        .accentColor(alerts.isEmpty ? .green : .red)
         .fullScreenCover(isPresented: needsKeyBinding) {
             APIKeySetupScreen().environmentObject(app)
         }
@@ -231,6 +236,11 @@ struct RootView: View {
 struct StationsScreen: View {
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @State private var savedCommutes: [SavedCommute] = []
+    @State private var showingAddCommute = false
+    @State private var editingCommute: SavedCommute?
+    @State private var newCommuteName = ""
+    @State private var renamingCommuteName = ""
 
     private var selectedNorthbound: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -243,21 +253,59 @@ struct StationsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
+                // Saved Commutes Section
                 Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Select your two Caltrain stations:")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text("• Southern Station: Your station closer to San Jose")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                        Text("• Northern Station: Your station closer to San Francisco")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                    ForEach(savedCommutes) { commute in
+                        Button {
+                            loadCommute(commute)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(commute.name)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                    if let south = commute.southboundStation, let north = commute.northboundStation {
+                                        Text("\(south.name) ↔ \(north.name)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                if commute.southboundStopCode == southboundStopCode &&
+                                   commute.northboundStopCode == northboundStopCode {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                deleteCommute(commute)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            Button {
+                                editingCommute = commute
+                                renamingCommuteName = commute.name
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            .tint(.blue)
+                        }
                     }
-                    .padding(.vertical, 4)
+
+                    Button {
+                        showingAddCommute = true
+                    } label: {
+                        Label("Save Current as Commute", systemImage: "plus.circle.fill")
+                    }
+                } header: {
+                    Text("My Commutes")
+                } footer: {
+                    Text("Save your frequent routes for quick access")
                 }
 
+                // Current Route Section
                 Section("Southern Station (e.g., Mountain View)") {
                     Picker("Southern Station", selection: $northboundStopCode) {
                         ForEach(CaltrainStops.northbound) { stop in
@@ -302,7 +350,7 @@ struct StationsScreen: View {
                         Spacer()
                     }
                 } header: {
-                    Text("Your Routes")
+                    Text("Current Route")
                 }
             }
             .navigationTitle("Stations")
@@ -314,6 +362,69 @@ struct StationsScreen: View {
                         .frame(width: 32, height: 32)
                 }
             }
+            .onAppear {
+                savedCommutes = CommuteStorage.shared.load()
+            }
+            .alert("Save Commute", isPresented: $showingAddCommute) {
+                TextField("Commute Name", text: $newCommuteName)
+                Button("Cancel", role: .cancel) {
+                    newCommuteName = ""
+                }
+                Button("Save") {
+                    addCommute(name: newCommuteName)
+                    newCommuteName = ""
+                }
+            } message: {
+                Text("Enter a name for this commute route")
+            }
+            .alert("Rename Commute", isPresented: Binding(
+                get: { editingCommute != nil },
+                set: { if !$0 { editingCommute = nil; renamingCommuteName = "" } }
+            )) {
+                TextField("Commute Name", text: $renamingCommuteName)
+                Button("Cancel", role: .cancel) {
+                    editingCommute = nil
+                    renamingCommuteName = ""
+                }
+                Button("Save") {
+                    if let commute = editingCommute {
+                        renameCommute(commute, to: renamingCommuteName)
+                    }
+                    editingCommute = nil
+                    renamingCommuteName = ""
+                }
+            } message: {
+                Text("Enter a new name for this commute")
+            }
+        }
+    }
+
+    private func addCommute(name: String) {
+        let newCommute = SavedCommute(
+            name: name.isEmpty ? "My Commute" : name,
+            southboundStopCode: southboundStopCode,
+            northboundStopCode: northboundStopCode
+        )
+        savedCommutes.append(newCommute)
+        CommuteStorage.shared.save(savedCommutes)
+    }
+
+    private func loadCommute(_ commute: SavedCommute) {
+        southboundStopCode = commute.southboundStopCode
+        northboundStopCode = commute.northboundStopCode
+    }
+
+    private func deleteCommute(_ commute: SavedCommute) {
+        savedCommutes.removeAll { $0.id == commute.id }
+        CommuteStorage.shared.save(savedCommutes)
+    }
+
+    private func renameCommute(_ commute: SavedCommute, to newName: String) {
+        if let index = savedCommutes.firstIndex(where: { $0.id == commute.id }) {
+            var updated = commute
+            updated.name = newName
+            savedCommutes[index] = updated
+            CommuteStorage.shared.save(savedCommutes)
         }
     }
 }
@@ -564,9 +675,6 @@ struct TrainsScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                DatePicker("Time", selection: $refDate, displayedComponents: [.hourAndMinute])
-                    .datePickerStyle(.compact)
-
                 HStack {
                     Button {
                         Task { await load() }
@@ -574,6 +682,10 @@ struct TrainsScreen: View {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.borderedProminent)
+
+                    DatePicker("", selection: $refDate, displayedComponents: [.hourAndMinute])
+                        .labelsHidden()
+                        .fixedSize()
 
                     Button("Now") { refDate = Date() }
                         .buttonStyle(.bordered)
@@ -636,14 +748,56 @@ struct TrainsScreen: View {
         print("🔍 Loading trains - Northbound code: \(northboundStopCode), Southbound code: \(southboundStopCode)")
         print("🔍 Northbound station: \(northboundStop.name), Southbound station: \(southboundStop.name)")
         do {
-            async let nb = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
-            async let sb = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
+            // Load GTFS scheduled departures
+            async let nbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: northboundStopCode, direction: 0, refDate: refDate, count: 3)
+            async let sbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: southboundStopCode, direction: 1, refDate: refDate, count: 3)
+
+            // Load SIRI real-time data for service types and delays
+            async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
+            async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
             async let al = SIRIService.serviceAlerts(apiKey: key)
-            let (n, s, a) = try await (nb, sb, al)
-            north = n; south = s; sharedAlerts = a
+
+            let (nScheduled, sScheduled, nRealtime, sRealtime, a) = try await (nbScheduled, sbScheduled, nbRealtime, sbRealtime, al)
+
+            // Merge GTFS scheduled times with SIRI real-time service types
+            north = mergeScheduledWithRealtime(scheduled: nScheduled, realtime: nRealtime)
+            south = mergeScheduledWithRealtime(scheduled: sScheduled, realtime: sRealtime)
+            sharedAlerts = a
         } catch {
             self.error = (error as NSError).localizedDescription
+            print("❌ Error loading trains: \(error)")
         }
+    }
+
+    // Merge GTFS scheduled times with SIRI real-time service types
+    private func mergeScheduledWithRealtime(scheduled: [Departure], realtime: [Departure]) -> [Departure] {
+        var result = scheduled
+
+        // Match scheduled trains with real-time data by approximate departure time
+        for (index, scheduledDep) in result.enumerated() {
+            guard let scheduledTime = scheduledDep.depTime else { continue }
+
+            // Find matching real-time departure (within 2 minutes)
+            if let matchingRealtime = realtime.first(where: { realtimeDep in
+                guard let realtimeTime = realtimeDep.depTime else { return false }
+                let diff = abs(scheduledTime.timeIntervalSince(realtimeTime))
+                return diff < 120 // 2 minutes tolerance
+            }) {
+                // Update with real-time service type if available
+                if let serviceType = matchingRealtime.trainNumber, !serviceType.isEmpty {
+                    result[index] = Departure(
+                        journeyRef: scheduledDep.journeyRef,
+                        minutes: scheduledDep.minutes,
+                        depTime: scheduledDep.depTime,
+                        direction: scheduledDep.direction,
+                        destination: scheduledDep.destination,
+                        trainNumber: serviceType
+                    )
+                }
+            }
+        }
+
+        return result
     }
 }
 
@@ -686,9 +840,14 @@ struct DepartureRow: View {
 
     var body: some View {
         HStack {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "—").font(.headline)
-                Text(destinationLabel).font(.subheadline).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(destinationLabel).font(.subheadline).foregroundStyle(.secondary)
+                    if let serviceType = dep.trainNumber, !serviceType.isEmpty {
+                        Text("(\(serviceType))").font(.caption).foregroundStyle(.tertiary)
+                    }
+                }
             }
             Spacer()
             VStack(alignment: .trailing) {
@@ -761,16 +920,23 @@ struct EventsScreen: View {
 
     private var allStationNames: [String] {
         var stations = ["All Stations"]
-        stations.append(contentsOf: CaltrainStops.northbound.map { $0.name })
+        stations.append(contentsOf: CaltrainStops.northbound.reversed().map { $0.name })
         return stations
     }
 
     private var filteredEvents: [BayAreaEvent] {
-        if selectedStation == "All Stations" {
-            return events
+        // First filter by capacity (20,000+)
+        let largeEvents = events.filter { event in
+            guard let capacity = event.venueCapacity else { return false }
+            return capacity >= 20000
         }
 
-        return events.filter { event in
+        // Then filter by station if selected
+        if selectedStation == "All Stations" {
+            return largeEvents
+        }
+
+        return largeEvents.filter { event in
             guard let nearest = event.nearestStation else { return false }
             return nearest.station.name == selectedStation && nearest.distance <= maxDistance
         }
@@ -800,55 +966,80 @@ struct EventsScreen: View {
                             .foregroundStyle(.tertiary)
                     }
                     .padding()
-                } else if !events.isEmpty && filteredEvents.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "mappin.slash")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.secondary)
-                        Text("No events near \(selectedStation)")
-                            .foregroundStyle(.secondary)
-                        Text("Try increasing the distance or selecting a different station")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
                 } else {
-                    List {
-                        // Filter controls as first section
-                        Section {
-                            Picker("Filter by Station", selection: $selectedStation) {
-                                ForEach(allStationNames, id: \.self) { station in
-                                    Text(station).tag(station)
+                    ZStack(alignment: .top) {
+                        // Events list or empty state
+                        if filteredEvents.isEmpty {
+                            VStack(spacing: 16) {
+                                Image(systemName: "mappin.slash")
+                                    .font(.system(size: 60))
+                                    .foregroundStyle(.secondary)
+                                Text("No events near \(selectedStation)")
+                                    .foregroundStyle(.secondary)
+                                Text("Try increasing the distance or selecting a different station")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding()
+                            .frame(maxHeight: .infinity)
+                        } else {
+                            List {
+                                Section {
+                                    ForEach(filteredEvents) { event in
+                                        EventRow(event: event)
+                                    }
+                                } header: {
+                                    if selectedStation == "All Stations" {
+                                        Text("All Events Today")
+                                    } else {
+                                        Text("Events near \(selectedStation)")
+                                    }
                                 }
                             }
+                            .listStyle(.insetGrouped)
+                            .safeAreaInset(edge: .top, spacing: 0) {
+                                VStack(spacing: 12) {
+                                    Menu {
+                                        Picker("Station", selection: $selectedStation) {
+                                            ForEach(allStationNames, id: \.self) { station in
+                                                Text(station).tag(station)
+                                            }
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Text("Station:")
+                                                .foregroundStyle(.secondary)
+                                            Text(selectedStation)
+                                                .fontWeight(.medium)
+                                            Spacer()
+                                            Image(systemName: "chevron.down")
+                                                .foregroundStyle(.secondary)
+                                                .font(.caption)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 8)
+                                        .background(Color(.secondarySystemBackground))
+                                        .cornerRadius(8)
+                                    }
 
-                            if selectedStation != "All Stations" {
-                                HStack {
-                                    Text("Max Distance")
-                                    Spacer()
-                                    Text("\(String(format: "%.1f", maxDistance)) mi")
-                                        .foregroundStyle(.secondary)
+                                    if selectedStation != "All Stations" {
+                                        VStack(spacing: 4) {
+                                            HStack {
+                                                Text("Max Distance")
+                                                Spacer()
+                                                Text("\(String(format: "%.1f", maxDistance)) mi")
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
+                                        }
+                                    }
                                 }
-
-                                Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
-                            }
-                        }
-
-                        // Events section
-                        Section {
-                            ForEach(filteredEvents) { event in
-                                EventRow(event: event)
-                            }
-                        } header: {
-                            if selectedStation == "All Stations" {
-                                Text("All Events Today")
-                            } else {
-                                Text("Events near \(selectedStation)")
+                                .padding()
+                                .background(Color(.systemGroupedBackground))
                             }
                         }
                     }
-                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("Bay Area Events")
@@ -917,11 +1108,6 @@ struct EventRow: View {
                 Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-            }
-
-            if let url = event.url {
-                Link("Get Tickets", destination: url)
-                    .font(.caption)
             }
         }
         .padding(.vertical, 4)
@@ -1038,6 +1224,7 @@ struct Departure: Identifiable, Hashable {
     let depTime: Date?
     let direction: String?
     let destination: String?
+    let trainNumber: String?
 }
 
 struct ServiceAlert: Identifiable, Hashable {
@@ -1056,6 +1243,7 @@ struct BayAreaEvent: Identifiable, Hashable {
     let url: URL?
     let venueLatitude: Double?
     let venueLongitude: Double?
+    let venueCapacity: Int?
 
     var nearestStation: (station: CaltrainStop, distance: Double)? {
         guard let lat = venueLatitude, let lon = venueLongitude else { return nil }
@@ -1075,6 +1263,565 @@ struct BayAreaEvent: Identifiable, Hashable {
         return allStations.map { station in
             (station: station, distance: station.distanceTo(latitude: lat, longitude: lon))
         }.min { $0.distance < $1.distance }
+    }
+}
+
+// MARK: - Saved Commutes
+struct SavedCommute: Identifiable, Codable, Hashable {
+    var id: UUID
+    var name: String
+    var southboundStopCode: String
+    var northboundStopCode: String
+
+    init(id: UUID = UUID(), name: String, southboundStopCode: String, northboundStopCode: String) {
+        self.id = id
+        self.name = name
+        self.southboundStopCode = southboundStopCode
+        self.northboundStopCode = northboundStopCode
+    }
+
+    var southboundStation: CaltrainStop? {
+        CaltrainStops.southbound.first { $0.stopCode == southboundStopCode }
+    }
+
+    var northboundStation: CaltrainStop? {
+        CaltrainStops.northbound.first { $0.stopCode == northboundStopCode }
+    }
+}
+
+class CommuteStorage {
+    static let shared = CommuteStorage()
+    private let key = "savedCommutes"
+
+    func load() -> [SavedCommute] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let commutes = try? JSONDecoder().decode([SavedCommute].self, from: data) else {
+            return []
+        }
+        return commutes
+    }
+
+    func save(_ commutes: [SavedCommute]) {
+        if let data = try? JSONEncoder().encode(commutes) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+}
+
+// MARK: - GTFS Models
+struct GTFSStop: Hashable {
+    let stopId: String
+    let stopName: String
+}
+
+struct GTFSTrip: Hashable {
+    let tripId: String
+    let serviceId: String
+    let directionId: Int // 0 = northbound, 1 = southbound
+    let routeId: String
+}
+
+struct GTFSStopTime: Hashable {
+    let tripId: String
+    let stopId: String
+    let departureTime: String // HH:MM:SS format (can be >24 hours like "25:30:00")
+    let stopSequence: Int
+}
+
+struct GTFSCalendar: Hashable {
+    let serviceId: String
+    let monday: Bool
+    let tuesday: Bool
+    let wednesday: Bool
+    let thursday: Bool
+    let friday: Bool
+    let saturday: Bool
+    let sunday: Bool
+    let startDate: String // YYYYMMDD
+    let endDate: String   // YYYYMMDD
+}
+
+struct GTFSCalendarDate: Hashable {
+    let serviceId: String
+    let date: String // YYYYMMDD
+    let exceptionType: Int // 1 = added, 2 = removed
+}
+
+// MARK: - GTFS Service
+actor GTFSService {
+    static let shared = GTFSService()
+
+    private var stops: [GTFSStop] = []
+    private var trips: [GTFSTrip] = []
+    private var stopTimes: [GTFSStopTime] = []
+    private var calendars: [GTFSCalendar] = []
+    private var calendarDates: [GTFSCalendarDate] = []
+    private var lastFetchDate: Date?
+
+    private let gtfsURL = "https://data.trilliumtransit.com/gtfs/caltrain-ca-us/caltrain-ca-us.zip"
+    private let cacheExpirationHours = 24.0
+
+    func ensureGTFSLoaded() async throws {
+        // Check if we need to refresh
+        if let lastFetch = lastFetchDate,
+           Date().timeIntervalSince(lastFetch) < cacheExpirationHours * 3600,
+           !trips.isEmpty {
+            return // Already loaded and fresh
+        }
+
+        try await downloadAndParseGTFS()
+    }
+
+    private func unzipGTFS(from zipPath: URL, to destDir: URL) throws {
+        // Simple ZIP extractor for iOS
+        let zipData = try Data(contentsOf: zipPath)
+        try extractZip(data: zipData, to: destDir)
+    }
+
+    // Minimal ZIP file parser (supports basic DEFLATE compressed ZIP files)
+    private func extractZip(data: Data, to destDir: URL) throws {
+        let fileManager = FileManager.default
+
+        // ZIP file structure parsing
+        var offset = 0
+        let bytes = [UInt8](data)
+
+        while offset < bytes.count - 30 {
+            // Look for local file header signature: 0x04034b50
+            guard offset + 30 <= bytes.count else { break }
+
+            let sig = UInt32(bytes[offset]) |
+                      (UInt32(bytes[offset+1]) << 8) |
+                      (UInt32(bytes[offset+2]) << 16) |
+                      (UInt32(bytes[offset+3]) << 24)
+
+            if sig == 0x04034b50 {
+                // Local file header found
+                let compMethod = UInt16(bytes[offset+8]) | (UInt16(bytes[offset+9]) << 8)
+                let compSize = UInt32(bytes[offset+18]) |
+                              (UInt32(bytes[offset+19]) << 8) |
+                              (UInt32(bytes[offset+20]) << 16) |
+                              (UInt32(bytes[offset+21]) << 24)
+                let uncompSize = UInt32(bytes[offset+22]) |
+                                (UInt32(bytes[offset+23]) << 8) |
+                                (UInt32(bytes[offset+24]) << 16) |
+                                (UInt32(bytes[offset+25]) << 24)
+                let nameLen = UInt16(bytes[offset+26]) | (UInt16(bytes[offset+27]) << 8)
+                let extraLen = UInt16(bytes[offset+28]) | (UInt16(bytes[offset+29]) << 8)
+
+                let nameStart = offset + 30
+                let nameEnd = nameStart + Int(nameLen)
+                guard nameEnd <= bytes.count else { break }
+
+                let fileNameData = Data(bytes[nameStart..<nameEnd])
+                guard let fileName = String(data: fileNameData, encoding: .utf8) else {
+                    offset = nameEnd + Int(extraLen) + Int(compSize)
+                    continue
+                }
+
+                // Skip directories
+                if fileName.hasSuffix("/") {
+                    offset = nameEnd + Int(extraLen) + Int(compSize)
+                    continue
+                }
+
+                let dataStart = nameEnd + Int(extraLen)
+                let dataEnd = dataStart + Int(compSize)
+                guard dataEnd <= bytes.count else { break }
+
+                let compData = Data(bytes[dataStart..<dataEnd])
+
+                // Decompress based on compression method
+                let decompData: Data
+                if compMethod == 0 {
+                    // No compression
+                    decompData = compData
+                } else if compMethod == 8 {
+                    // DEFLATE compression
+                    decompData = try decompress(compData, uncompressedSize: Int(uncompSize))
+                } else {
+                    // Unsupported compression method
+                    throw NSError(domain: "GTFS", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unsupported ZIP compression method: \(compMethod)"])
+                }
+
+                // Write file
+                let filePath = destDir.appendingPathComponent(fileName)
+                try fileManager.createDirectory(at: filePath.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try decompData.write(to: filePath)
+
+                offset = dataEnd
+            } else {
+                offset += 1
+            }
+        }
+    }
+
+    private func decompress(_ data: Data, uncompressedSize: Int) throws -> Data {
+        // Use Apple's Compression framework (available on iOS 9+)
+        let sourceBuffer = [UInt8](data)
+        let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: uncompressedSize)
+        defer { destinationBuffer.deallocate() }
+
+        let decompressedSize = sourceBuffer.withUnsafeBufferPointer { srcPtr in
+            compression_decode_buffer(
+                destinationBuffer,
+                uncompressedSize,
+                srcPtr.baseAddress!,
+                sourceBuffer.count,
+                nil,
+                COMPRESSION_ZLIB
+            )
+        }
+
+        guard decompressedSize > 0 else {
+            throw NSError(domain: "GTFS", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to decompress ZIP data"])
+        }
+
+        return Data(bytes: destinationBuffer, count: decompressedSize)
+    }
+
+    private func downloadAndParseGTFS() async throws {
+        print("📥 Downloading GTFS feed...")
+
+        guard let url = URL(string: gtfsURL) else {
+            throw URLError(.badURL)
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+
+        print("📦 GTFS downloaded (\(data.count) bytes), extracting...")
+
+        // Create temp directory for extraction
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        // Save ZIP to temp file
+        let zipPath = tempDir.appendingPathComponent("gtfs.zip")
+        try data.write(to: zipPath)
+
+        // Unzip the GTFS data
+        try unzipGTFS(from: zipPath, to: tempDir)
+
+        print("📖 Parsing GTFS CSV files...")
+
+        // Parse each CSV file
+        stops = try parseStops(at: tempDir.appendingPathComponent("stops.txt"))
+        trips = try parseTrips(at: tempDir.appendingPathComponent("trips.txt"))
+        stopTimes = try parseStopTimes(at: tempDir.appendingPathComponent("stop_times.txt"))
+        calendars = try parseCalendars(at: tempDir.appendingPathComponent("calendar.txt"))
+        calendarDates = try parseCalendarDates(at: tempDir.appendingPathComponent("calendar_dates.txt"))
+
+        lastFetchDate = Date()
+
+        print("✅ GTFS loaded: \(stops.count) stops, \(trips.count) trips, \(stopTimes.count) stop times")
+    }
+
+    private func parseStops(at url: URL) throws -> [GTFSStop] {
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return [] }
+
+        let headers = parseCSVLine(headerLine)
+        guard let stopIdIdx = headers.firstIndex(of: "stop_id"),
+              let stopNameIdx = headers.firstIndex(of: "stop_name") else {
+            return []
+        }
+
+        return lines.dropFirst().compactMap { line in
+            let fields = parseCSVLine(line)
+            guard fields.count > max(stopIdIdx, stopNameIdx) else { return nil }
+            return GTFSStop(stopId: fields[stopIdIdx], stopName: fields[stopNameIdx])
+        }
+    }
+
+    private func parseTrips(at url: URL) throws -> [GTFSTrip] {
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return [] }
+
+        let headers = parseCSVLine(headerLine)
+        guard let tripIdIdx = headers.firstIndex(of: "trip_id"),
+              let serviceIdIdx = headers.firstIndex(of: "service_id"),
+              let directionIdIdx = headers.firstIndex(of: "direction_id"),
+              let routeIdIdx = headers.firstIndex(of: "route_id") else {
+            return []
+        }
+
+        return lines.dropFirst().compactMap { line in
+            let fields = parseCSVLine(line)
+            guard fields.count > max(tripIdIdx, serviceIdIdx, directionIdIdx, routeIdIdx),
+                  let directionId = Int(fields[directionIdIdx]) else { return nil }
+            return GTFSTrip(
+                tripId: fields[tripIdIdx],
+                serviceId: fields[serviceIdIdx],
+                directionId: directionId,
+                routeId: fields[routeIdIdx]
+            )
+        }
+    }
+
+    private func parseStopTimes(at url: URL) throws -> [GTFSStopTime] {
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return [] }
+
+        let headers = parseCSVLine(headerLine)
+        guard let tripIdIdx = headers.firstIndex(of: "trip_id"),
+              let stopIdIdx = headers.firstIndex(of: "stop_id"),
+              let departureTimeIdx = headers.firstIndex(of: "departure_time"),
+              let stopSequenceIdx = headers.firstIndex(of: "stop_sequence") else {
+            return []
+        }
+
+        return lines.dropFirst().compactMap { line in
+            let fields = parseCSVLine(line)
+            guard fields.count > max(tripIdIdx, stopIdIdx, departureTimeIdx, stopSequenceIdx),
+                  let stopSequence = Int(fields[stopSequenceIdx]) else { return nil }
+            return GTFSStopTime(
+                tripId: fields[tripIdIdx],
+                stopId: fields[stopIdIdx],
+                departureTime: fields[departureTimeIdx],
+                stopSequence: stopSequence
+            )
+        }
+    }
+
+    private func parseCalendars(at url: URL) throws -> [GTFSCalendar] {
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return [] }
+
+        let headers = parseCSVLine(headerLine)
+        guard let serviceIdIdx = headers.firstIndex(of: "service_id"),
+              let mondayIdx = headers.firstIndex(of: "monday"),
+              let tuesdayIdx = headers.firstIndex(of: "tuesday"),
+              let wednesdayIdx = headers.firstIndex(of: "wednesday"),
+              let thursdayIdx = headers.firstIndex(of: "thursday"),
+              let fridayIdx = headers.firstIndex(of: "friday"),
+              let saturdayIdx = headers.firstIndex(of: "saturday"),
+              let sundayIdx = headers.firstIndex(of: "sunday"),
+              let startDateIdx = headers.firstIndex(of: "start_date"),
+              let endDateIdx = headers.firstIndex(of: "end_date") else {
+            return []
+        }
+
+        return lines.dropFirst().compactMap { line in
+            let fields = parseCSVLine(line)
+            let maxIdx = max(serviceIdIdx, mondayIdx, tuesdayIdx, wednesdayIdx, thursdayIdx, fridayIdx, saturdayIdx, sundayIdx, startDateIdx, endDateIdx)
+            guard fields.count > maxIdx else { return nil }
+            return GTFSCalendar(
+                serviceId: fields[serviceIdIdx],
+                monday: fields[mondayIdx] == "1",
+                tuesday: fields[tuesdayIdx] == "1",
+                wednesday: fields[wednesdayIdx] == "1",
+                thursday: fields[thursdayIdx] == "1",
+                friday: fields[fridayIdx] == "1",
+                saturday: fields[saturdayIdx] == "1",
+                sunday: fields[sundayIdx] == "1",
+                startDate: fields[startDateIdx],
+                endDate: fields[endDateIdx]
+            )
+        }
+    }
+
+    private func parseCalendarDates(at url: URL) throws -> [GTFSCalendarDate] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return [] // calendar_dates.txt is optional
+        }
+
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else { return [] }
+
+        let headers = parseCSVLine(headerLine)
+        guard let serviceIdIdx = headers.firstIndex(of: "service_id"),
+              let dateIdx = headers.firstIndex(of: "date"),
+              let exceptionTypeIdx = headers.firstIndex(of: "exception_type") else {
+            return []
+        }
+
+        return lines.dropFirst().compactMap { line in
+            let fields = parseCSVLine(line)
+            guard fields.count > max(serviceIdIdx, dateIdx, exceptionTypeIdx),
+                  let exceptionType = Int(fields[exceptionTypeIdx]) else { return nil }
+            return GTFSCalendarDate(
+                serviceId: fields[serviceIdIdx],
+                date: fields[dateIdx],
+                exceptionType: exceptionType
+            )
+        }
+    }
+
+    // Simple CSV parser that handles quoted fields
+    private func parseCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var currentField = ""
+        var insideQuotes = false
+
+        for char in line {
+            if char == "\"" {
+                insideQuotes.toggle()
+            } else if char == "," && !insideQuotes {
+                fields.append(currentField.trimmingCharacters(in: .whitespaces))
+                currentField = ""
+            } else {
+                currentField.append(char)
+            }
+        }
+        fields.append(currentField.trimmingCharacters(in: .whitespaces))
+
+        return fields
+    }
+
+    // Get scheduled departures for a stop at a given time
+    func getScheduledDepartures(stopCode: String, direction: Int, refDate: Date, count: Int = 3) async throws -> [Departure] {
+        try await ensureGTFSLoaded()
+
+        // Convert stopCode to GTFS stop_id format
+        // Caltrain uses stopCode like "70212" which maps to stop_id in GTFS
+        let stopId = stopCode
+
+        // Get current date components in Pacific Time
+        var pacificCalendar = Calendar.current
+        pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+
+        let today = pacificCalendar.startOfDay(for: refDate)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd"
+        dateFormatter.timeZone = pacificCalendar.timeZone
+        let todayStr = dateFormatter.string(from: today)
+
+        // Get weekday (1 = Sunday, 2 = Monday, ..., 7 = Saturday)
+        let weekday = pacificCalendar.component(.weekday, from: today)
+
+        // Find active services for today
+        let activeServices = getActiveServices(dateStr: todayStr, weekday: weekday)
+
+        // Find trips for this direction and active services
+        let relevantTrips = trips.filter { trip in
+            trip.directionId == direction && activeServices.contains(trip.serviceId)
+        }
+
+        // Get stop times for these trips at our stop
+        let relevantStopTimes = stopTimes.filter { st in
+            st.stopId == stopId && relevantTrips.contains { $0.tripId == st.tripId }
+        }
+
+        // Convert reference time to minutes since midnight
+        let refComponents = pacificCalendar.dateComponents([.hour, .minute], from: refDate)
+        let refMinutes = (refComponents.hour ?? 0) * 60 + (refComponents.minute ?? 0)
+
+        // Parse departure times and filter for times after reference time
+        var departures: [(time: String, minutes: Int, tripId: String, departureDate: Date)] = []
+
+        for st in relevantStopTimes {
+            let timeComponents = st.departureTime.split(separator: ":")
+            guard timeComponents.count == 3,
+                  let hours = Int(timeComponents[0]),
+                  let minutes = Int(timeComponents[1]) else { continue }
+
+            var totalMinutes = hours * 60 + minutes
+            var departureDate = today
+
+            // Handle times >= 24:00:00 (next day)
+            if hours >= 24 {
+                totalMinutes = (hours - 24) * 60 + minutes
+                departureDate = pacificCalendar.date(byAdding: .day, value: 1, to: today)!
+            }
+
+            // Only include departures after reference time (same day)
+            if totalMinutes >= refMinutes {
+                let minutesUntil = totalMinutes - refMinutes
+                departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
+            }
+        }
+
+        // Sort by minutes until departure and take first N
+        departures.sort { $0.minutes < $1.minutes }
+        let topDepartures = departures.prefix(count)
+
+        // Get current time for calculating actual minutes until departure
+        let now = Date()
+
+        // Convert to Departure objects
+        return topDepartures.map { dep in
+
+            // Parse time to create actual departure Date
+            let timeComponents = dep.time.split(separator: ":")
+            var depDate = dep.departureDate
+            if let hours = Int(timeComponents[0]), let mins = Int(timeComponents[1]) {
+                let actualHours = hours >= 24 ? hours - 24 : hours
+                depDate = pacificCalendar.date(bySettingHour: actualHours, minute: mins, second: 0, of: dep.departureDate) ?? dep.departureDate
+            }
+
+            // Calculate minutes until departure from current time (not reference time)
+            let minutesUntilDeparture = Int(depDate.timeIntervalSince(now) / 60)
+
+            // Get destination from last stop in trip
+            let tripStopTimes = stopTimes.filter { $0.tripId == dep.tripId }.sorted { $0.stopSequence < $1.stopSequence }
+            let lastStopId = tripStopTimes.last?.stopId
+            let destination = stops.first { $0.stopId == lastStopId }?.stopName ?? "Unknown"
+
+            return Departure(
+                journeyRef: dep.tripId,
+                minutes: minutesUntilDeparture,
+                depTime: depDate,
+                direction: direction == 0 ? "North" : "South",
+                destination: destination,
+                trainNumber: nil // Will be filled with service type from SIRI if available
+            )
+        }
+    }
+
+    private func getActiveServices(dateStr: String, weekday: Int) -> Set<String> {
+        var activeServices = Set<String>()
+
+        // Check calendar.txt for regular schedules
+        for cal in calendars {
+            // Check if date is in range
+            guard dateStr >= cal.startDate && dateStr <= cal.endDate else { continue }
+
+            // Check if service runs on this weekday
+            let runsToday: Bool
+            switch weekday {
+            case 1: runsToday = cal.sunday
+            case 2: runsToday = cal.monday
+            case 3: runsToday = cal.tuesday
+            case 4: runsToday = cal.wednesday
+            case 5: runsToday = cal.thursday
+            case 6: runsToday = cal.friday
+            case 7: runsToday = cal.saturday
+            default: runsToday = false
+            }
+
+            if runsToday {
+                activeServices.insert(cal.serviceId)
+            }
+        }
+
+        // Apply exceptions from calendar_dates.txt
+        for calDate in calendarDates {
+            guard calDate.date == dateStr else { continue }
+
+            if calDate.exceptionType == 1 {
+                // Service added for this date
+                activeServices.insert(calDate.serviceId)
+            } else if calDate.exceptionType == 2 {
+                // Service removed for this date
+                activeServices.remove(calDate.serviceId)
+            }
+        }
+
+        return activeServices
     }
 }
 
@@ -1137,9 +1884,11 @@ struct MonitoredVehicleJourneyNode: Decodable {
     let DestinationName: String?
     let MonitoredCall: MonitoredCallNode?
     let FramedVehicleJourneyRef: FramedVehicleJourneyRefNode?
+    let PublishedLineName: String?
+    let VehicleRef: String?
 
     enum CodingKeys: String, CodingKey {
-        case LineRef, DirectionRef, DestinationName, MonitoredCall, FramedVehicleJourneyRef
+        case LineRef, DirectionRef, DestinationName, MonitoredCall, FramedVehicleJourneyRef, PublishedLineName, VehicleRef
     }
 
     init(from decoder: any Decoder) throws {
@@ -1148,6 +1897,8 @@ struct MonitoredVehicleJourneyNode: Decodable {
         self.DirectionRef = try? c.decodeIfPresent(String.self, forKey: .DirectionRef)
         self.MonitoredCall = try? c.decodeIfPresent(MonitoredCallNode.self, forKey: .MonitoredCall)
         self.FramedVehicleJourneyRef = try? c.decodeIfPresent(FramedVehicleJourneyRefNode.self, forKey: .FramedVehicleJourneyRef)
+        self.PublishedLineName = try? c.decodeIfPresent(String.self, forKey: .PublishedLineName)
+        self.VehicleRef = try? c.decodeIfPresent(String.self, forKey: .VehicleRef)
 
         if let s = try? c.decodeIfPresent(String.self, forKey: .DestinationName) {
             self.DestinationName = s
@@ -1306,10 +2057,10 @@ struct SIRIService {
         let visits = try await stopMonitoring(stopCode: stop, apiKey: apiKey)
         let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let df = ISO8601DateFormatter()
-        let now = Date() // Use actual current time, not the picker time
+        let now = refDate // Use the selected time from the picker
 
         var out: [Departure] = []
-        print("📍 Stop: \(stop), Expected Dir: \(expectedDirection ?? "any"), Now: \(now), Visits: \(visits.count)")
+        print("📍 Stop: \(stop), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
         for v in visits {
             let mvj = v.MonitoredVehicleJourney
             let aimed = mvj.MonitoredCall?.AimedDepartureTime
@@ -1317,7 +2068,13 @@ struct SIRIService {
             // Calculate minutes, rounding up (ceiling) so a train in 30 seconds shows as 1m
             let minutes = date.map { Int(ceil($0.timeIntervalSince(now) / 60)) } ?? 0
             let direction = mvj.DirectionRef
+
+            // Debug: Print all available fields
             print("  🚂 Dir: \(direction ?? "?"), Aimed: \(aimed ?? "nil"), Minutes: \(minutes), Dest: \(mvj.DestinationName ?? "nil")")
+            print("     LineRef: \(mvj.LineRef ?? "nil")")
+            print("     PublishedLineName: \(mvj.PublishedLineName ?? "nil")")
+            print("     VehicleRef: \(mvj.VehicleRef ?? "nil")")
+            print("     DatedVehicleJourneyRef: \(mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? "nil")")
 
             // Filter by direction if we have an expected direction
             if let expected = expectedDirection, direction != expected {
@@ -1325,10 +2082,15 @@ struct SIRIService {
                 continue
             }
 
+            // Extract service type (Local, Limited, etc.) from LineRef
+            let journeyRef = mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? UUID().uuidString
+            let serviceType = mvj.LineRef
+
             let dep = Departure(
-                journeyRef: mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? UUID().uuidString,
+                journeyRef: journeyRef,
                 minutes: minutes, depTime: date,
-                direction: mvj.DirectionRef, destination: mvj.DestinationName
+                direction: mvj.DirectionRef, destination: mvj.DestinationName,
+                trainNumber: serviceType
             )
             // Only include future departures (at least 1 minute away)
             if minutes > 0 { out.append(dep) }
@@ -1403,10 +2165,19 @@ struct TicketmasterService {
                 var venueName: String?
                 var venueLat: Double?
                 var venueLon: Double?
+                var venueCapacity: Int?
                 if let embedded = eventData["_embedded"] as? [String: Any],
                    let venues = embedded["venues"] as? [[String: Any]],
                    let firstVenue = venues.first {
                     venueName = firstVenue["name"] as? String
+
+                    // Parse capacity
+                    if let capacity = firstVenue["capacity"] as? Int {
+                        venueCapacity = capacity
+                    } else if let capacityStr = firstVenue["capacity"] as? String,
+                              let capacity = Int(capacityStr) {
+                        venueCapacity = capacity
+                    }
 
                     // Parse location
                     if let location = firstVenue["location"] as? [String: Any] {
@@ -1432,7 +2203,8 @@ struct TicketmasterService {
                     venueName: venueName,
                     url: eventURL,
                     venueLatitude: venueLat,
-                    venueLongitude: venueLon
+                    venueLongitude: venueLon,
+                    venueCapacity: venueCapacity
                 )
                 events.append(event)
             }

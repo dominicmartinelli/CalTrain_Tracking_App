@@ -10,16 +10,19 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Cohesive retro aesthetic throughout the app
 
 ### 🚂 Train Tracking
-- Real-time Caltrain departure times from the 511.org SIRI API
+- **Complete Caltrain schedule** using GTFS static data - shows all scheduled trains
+- **Real-time enhancements** from 511.org SIRI API (service types, delays)
 - Track trains between any two Caltrain stations
 - Shows next 3 departures for both northbound and southbound directions
-- Displays departure times and countdown in minutes
-- Customizable time selection to check future departures
-- Service alerts displayed when active
+- Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
+- **Time picker** to check departures at any future time - shows full schedule, not just real-time trains
+- Service alerts displayed when active and highlighted at top of screen
+- Automatic GTFS feed updates (24-hour cache)
 
 ### 🎟️ Bay Area Events
 - Shows events happening **today only** within 50 miles of San Francisco
 - Powered by Ticketmaster Discovery API
+- **Filters to show only large events** (20,000+ capacity venues)
 - Event details include venue, time, and ticket links
 - **Displays nearest Caltrain station** with distance for each event
 - **Filter events by specific Caltrain station** with adjustable distance radius
@@ -28,13 +31,17 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 
 ### 🚨 Service Alerts
 - Dedicated alerts tab with visual status indicator
-- Green checkmark when no alerts (with "Alright Alright Alright" message)
-- Red warning icon with badge count when alerts are active
+- Checkmark icon when no alerts (with "Alright Alright Alright" message)
+- Warning triangle icon with badge count when alerts are active
 - Real-time Caltrain service disruption notifications
+- Alerts automatically load on app start and display on Trains screen when present
 
 ### 📍 Station Selection
 - Dedicated Stations tab for easy configuration
-- Select any two Caltrain stations for your commute
+- **Save multiple commute routes** with custom names (e.g., "Home → Work", "Weekend SF Trip")
+- Quick-switch between saved commutes with one tap
+- Swipe to rename or delete saved routes
+- Select any two Caltrain stations for your current route
 - Supports all 27 Caltrain stations from Gilroy to San Francisco
 - Visual route preview with northbound/southbound indicators
 
@@ -115,18 +122,34 @@ All Caltrain stations are supported:
 - Uses iOS 17's `.onChange(of:initial:)` for reactive updates
 - Secure keychain storage for API credentials
 - Async/await networking with URLSession
+- **GTFS (General Transit Feed Specification)** static schedule parsing
+  - Downloads and parses Caltrain GTFS feed from Trillium Transit
+  - Shows complete train schedule for any selected time (not just real-time trains)
+  - Custom pure-Swift ZIP extractor using Apple's Compression framework (iOS compatible)
+  - Parses CSV files: stops.txt, trips.txt, stop_times.txt, calendar.txt, calendar_dates.txt
+  - Service calendar logic determines which trips run on which days (handles weekdays and exception dates)
+  - Handles GTFS time format (supports times like "25:30:00" for next day)
+  - Calculates actual minutes until departure from current time
+  - 24-hour cache with automatic refresh
+- **SIRI API integration** for real-time enhancements
+  - Overlays real-time service types (Local, Limited, etc.) on scheduled trains
+  - Provides service alerts and delay information
+  - Merges SIRI real-time data with GTFS scheduled data for best of both worlds
 - Robust SIRI XML/JSON response parsing
 - Haversine formula for calculating distances between venues and stations
 - Custom splash screen with fade-out animation
+- Event capacity filtering (20,000+ venues only)
 
-## APIs Used
+## APIs & Data Sources
 
-- **511.org Transit API**: Real-time Caltrain departure data and service alerts
+- **Caltrain GTFS Feed**: Static schedule data from https://data.trilliumtransit.com/gtfs/caltrain-ca-us/
+- **511.org Transit API**: Real-time service types, delays, and service alerts
 - **Ticketmaster Discovery API**: Bay Area events information
 
 ## Data Attribution & Disclaimer
 
-- Transit data provided by 511.org
+- Static schedule data provided by Caltrain GTFS feed via Trillium Transit
+- Real-time data and service alerts provided by 511.org
 - Events data provided by Ticketmaster Discovery API
 - Transit times are estimates only and provided "as is" without warranty
 - Always verify departure times before traveling
