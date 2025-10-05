@@ -160,7 +160,7 @@ struct RootView: View {
                 .tabItem {
                     Label("Alerts", systemImage: alerts.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
-                .badge(alerts.isEmpty ? nil : alerts.count)
+                .badge(alerts.count)
                 .tag(2)
             SettingsScreen()
                 .tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
