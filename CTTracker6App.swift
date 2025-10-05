@@ -168,9 +168,19 @@ struct RootView: View {
 struct SettingsScreen: View {
     @EnvironmentObject private var app: AppState
     @AppStorage("username") private var username = ""
+    @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
+    @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @State private var apiKey: String = ""
     @State private var status: String = ""
     @State private var statusColor: Color = .secondary
+
+    private var selectedNorthbound: CaltrainStop {
+        CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
+    }
+
+    private var selectedSouthbound: CaltrainStop {
+        CaltrainStops.southbound.first { $0.stopCode == southboundStopCode } ?? CaltrainStops.defaultSouthbound
+    }
 
     var body: some View {
         NavigationStack {
@@ -179,6 +189,39 @@ struct SettingsScreen: View {
                     TextField("Username (optional)", text: $username)
                         .textInputAutocapitalization(.never)
                 }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Southern Station")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker("Southern Station", selection: $northboundStopCode) {
+                            ForEach(CaltrainStops.northbound) { stop in
+                                Text(stop.name).tag(stop.stopCode)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 120)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Northern Station")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker("Northern Station", selection: $southboundStopCode) {
+                            ForEach(CaltrainStops.southbound) { stop in
+                                Text(stop.name).tag(stop.stopCode)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 120)
+                    }
+                } header: {
+                    Text("Train Stations")
+                } footer: {
+                    Text("Select your two stations. Northbound trains go from southern → northern station. Southbound trains go from northern → southern station.")
+                }
+
                 Section("511.org API") {
                     SecureField("API Key", text: $apiKey)
                     if !status.isEmpty { Text(status).foregroundStyle(statusColor) }
@@ -229,24 +272,27 @@ struct SettingsScreen: View {
 
 // MARK: - Trains UI
 struct TrainsScreen: View {
+    @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
+    @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @State private var refDate = Date()
     @State private var north: [Departure] = []
     @State private var south: [Departure] = []
     @State private var loading = false
     @State private var error: String?
-    @State private var sel = 0 // 0 = MV→22nd, 1 = 22nd→MV (UI only)
+
+    private var northboundStop: CaltrainStop {
+        CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
+    }
+
+    private var southboundStop: CaltrainStop {
+        CaltrainStops.southbound.first { $0.stopCode == southboundStopCode } ?? CaltrainStops.defaultSouthbound
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
                 DatePicker("Time", selection: $refDate, displayedComponents: [.hourAndMinute])
                     .datePickerStyle(.compact)
-
-                Picker("Route", selection: $sel) {
-                    Text("MV → 22nd").tag(0)
-                    Text("22nd → MV").tag(1)
-                }
-                .pickerStyle(.segmented)
 
                 HStack {
                     Button {
@@ -264,15 +310,25 @@ struct TrainsScreen: View {
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
 
                 List {
-                    Section("Northbound MV → 22nd") { ForEach(north) { DepartureRow(dep: $0) } }
-                    Section("Southbound 22nd → MV") { ForEach(south) { DepartureRow(dep: $0) } }
+                    Section("Northbound from \(northboundStop.name)") {
+                        ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name) }
+                    }
+                    Section("Southbound from \(southboundStop.name)") {
+                        ForEach(south) { DepartureRow(dep: $0, destinationLabel: northboundStop.name) }
+                    }
                 }
                 .listStyle(.insetGrouped)
             }
             .padding(.horizontal)
-            .navigationTitle("Caltrain MV ⇄ 22nd")
+            .navigationTitle("Caltrain")
             .task { await load() } // initial fetch
             .onChange(of: refDate, initial: false) { _, _ in // iOS 17 two-arg
+                Task { await load() }
+            }
+            .onChange(of: northboundStopCode, initial: false) { _, _ in
+                Task { await load() }
+            }
+            .onChange(of: southboundStopCode, initial: false) { _, _ in
                 Task { await load() }
             }
         }
@@ -285,9 +341,11 @@ struct TrainsScreen: View {
             error = "Add your 511 API key in Settings."
             return
         }
+        print("🔍 Loading trains - Northbound code: \(northboundStopCode), Southbound code: \(southboundStopCode)")
+        print("🔍 Northbound station: \(northboundStop.name), Southbound station: \(southboundStop.name)")
         do {
-            async let nb = SIRIService.nextDepartures(from: Stops.mvNorth, at: refDate, apiKey: key)
-            async let sb = SIRIService.nextDepartures(from: Stops.st22South, at: refDate, apiKey: key)
+            async let nb = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
+            async let sb = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
             let (n, s) = try await (nb, sb)
             north = n; south = s
         } catch {
@@ -298,16 +356,7 @@ struct TrainsScreen: View {
 
 struct DepartureRow: View {
     let dep: Departure
-
-    private var destinationLabel: String {
-        // Show the actual stations for this route (MV ⇄ 22nd)
-        if dep.direction == "N" {
-            return "22nd Street"
-        } else if dep.direction == "S" {
-            return "Mountain View"
-        }
-        return "—"
-    }
+    let destinationLabel: String
 
     var body: some View {
         HStack {
@@ -368,12 +417,87 @@ struct GiantsScreen: View {
 }
 
 // MARK: - Domain & Networking
-enum Stops {
-    // Caltrain 511 Stop Codes
-    // Mountain View station code is 70211 (northbound) and 70212 (southbound)
-    // 22nd Street station code is 70021 (northbound) and 70022 (southbound)
-    static let mvNorth = "70211"   // Mountain View → SF (northbound platform)
-    static let st22South = "70022"  // 22nd Street → SJ (southbound platform)
+
+// Station model
+struct CaltrainStop: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let stopCode: String
+
+    init(name: String, stopCode: String) {
+        self.id = stopCode
+        self.name = name
+        self.stopCode = stopCode
+    }
+}
+
+// All available Caltrain stops
+struct CaltrainStops {
+    // Northbound stops (toward San Francisco) - odd numbered stop codes
+    static let northbound: [CaltrainStop] = [
+        CaltrainStop(name: "Gilroy", stopCode: "777403"),
+        CaltrainStop(name: "San Martin", stopCode: "777402"),
+        CaltrainStop(name: "Morgan Hill", stopCode: "777401"),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70007"),
+        CaltrainStop(name: "Capitol", stopCode: "70005"),
+        CaltrainStop(name: "Tamien", stopCode: "70003"),
+        CaltrainStop(name: "San Jose Diridon", stopCode: "70261"),
+        CaltrainStop(name: "Santa Clara", stopCode: "70271"),
+        CaltrainStop(name: "Lawrence", stopCode: "70281"),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70291"),
+        CaltrainStop(name: "Mountain View", stopCode: "70211"),
+        CaltrainStop(name: "San Antonio", stopCode: "70221"),
+        CaltrainStop(name: "California Ave", stopCode: "70231"),
+        CaltrainStop(name: "Palo Alto", stopCode: "70241"),
+        CaltrainStop(name: "Menlo Park", stopCode: "70251"),
+        CaltrainStop(name: "Redwood City", stopCode: "70311"),
+        CaltrainStop(name: "San Carlos", stopCode: "70321"),
+        CaltrainStop(name: "Belmont", stopCode: "70331"),
+        CaltrainStop(name: "Hillsdale", stopCode: "70341"),
+        CaltrainStop(name: "San Mateo", stopCode: "70351"),
+        CaltrainStop(name: "Burlingame", stopCode: "70361"),
+        CaltrainStop(name: "Millbrae", stopCode: "70371"),
+        CaltrainStop(name: "San Bruno", stopCode: "70381"),
+        CaltrainStop(name: "South San Francisco", stopCode: "70011"),
+        CaltrainStop(name: "Bayshore", stopCode: "70031"),
+        CaltrainStop(name: "22nd Street", stopCode: "70021"),
+        CaltrainStop(name: "San Francisco", stopCode: "70041")
+    ]
+
+    // Southbound stops (toward San Jose) - even numbered stop codes
+    static let southbound: [CaltrainStop] = [
+        CaltrainStop(name: "San Francisco", stopCode: "70042"),
+        CaltrainStop(name: "22nd Street", stopCode: "70022"),
+        CaltrainStop(name: "Bayshore", stopCode: "70032"),
+        CaltrainStop(name: "South San Francisco", stopCode: "70012"),
+        CaltrainStop(name: "San Bruno", stopCode: "70382"),
+        CaltrainStop(name: "Millbrae", stopCode: "70372"),
+        CaltrainStop(name: "Burlingame", stopCode: "70362"),
+        CaltrainStop(name: "San Mateo", stopCode: "70352"),
+        CaltrainStop(name: "Hillsdale", stopCode: "70342"),
+        CaltrainStop(name: "Belmont", stopCode: "70332"),
+        CaltrainStop(name: "San Carlos", stopCode: "70322"),
+        CaltrainStop(name: "Redwood City", stopCode: "70312"),
+        CaltrainStop(name: "Menlo Park", stopCode: "70252"),
+        CaltrainStop(name: "Palo Alto", stopCode: "70242"),
+        CaltrainStop(name: "California Ave", stopCode: "70232"),
+        CaltrainStop(name: "San Antonio", stopCode: "70222"),
+        CaltrainStop(name: "Mountain View", stopCode: "70212"),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70292"),
+        CaltrainStop(name: "Lawrence", stopCode: "70282"),
+        CaltrainStop(name: "Santa Clara", stopCode: "70272"),
+        CaltrainStop(name: "San Jose Diridon", stopCode: "70262"),
+        CaltrainStop(name: "Tamien", stopCode: "70004"),
+        CaltrainStop(name: "Capitol", stopCode: "70006"),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70008"),
+        CaltrainStop(name: "Morgan Hill", stopCode: "777402"),
+        CaltrainStop(name: "San Martin", stopCode: "777403"),
+        CaltrainStop(name: "Gilroy", stopCode: "777404")
+    ]
+
+    // Default stops (Mountain View northbound and 22nd Street southbound)
+    static let defaultNorthbound = northbound.first { $0.name == "Mountain View" }!
+    static let defaultSouthbound = southbound.first { $0.name == "22nd Street" }!
 }
 
 struct Departure: Identifiable, Hashable {
@@ -500,15 +624,11 @@ struct SIRIService {
         }
     }
 
-    static func nextDepartures(from stop: String, at refDate: Date, apiKey: String) async throws -> [Departure] {
+    static func nextDepartures(from stop: String, at refDate: Date, apiKey: String, expectedDirection: String? = nil) async throws -> [Departure] {
         let visits = try await stopMonitoring(stopCode: stop, apiKey: apiKey)
         let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let df = ISO8601DateFormatter()
         let now = Date() // Use actual current time, not the picker time
-
-        // Determine expected direction based on stop code
-        let expectedDirection = (stop == Stops.mvNorth || stop == Stops.st22South) ?
-            (stop == Stops.mvNorth ? "N" : "S") : nil
 
         var out: [Departure] = []
         print("📍 Stop: \(stop), Expected Dir: \(expectedDirection ?? "any"), Now: \(now), Visits: \(visits.count)")
