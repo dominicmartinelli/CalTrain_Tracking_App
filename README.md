@@ -1,6 +1,6 @@
 # CalTrain Tracking App
 
-A SwiftUI iOS app for tracking Caltrain departures and SF Giants home games.
+A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area events.
 
 ## Features
 
@@ -10,29 +10,57 @@ A SwiftUI iOS app for tracking Caltrain departures and SF Giants home games.
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times and countdown in minutes
 - Customizable time selection to check future departures
+- Service alerts displayed when active
 
-### ⚾ Giants Game Tracking
-- Shows SF Giants home games for today
-- Indicates if it's a day game (which may affect Caltrain crowding)
-- Uses MLB Stats API for game information
+### 🎟️ Bay Area Events
+- Shows events happening today within 50 miles of San Francisco
+- Powered by Ticketmaster Discovery API
+- Event details include venue, time, and ticket links
+- Covers concerts, sports, theater, and more
 
-### ⚙️ Settings
+### 🚨 Service Alerts
+- Dedicated alerts tab with visual status indicator
+- Green checkmark when no alerts (with "Alright Alright Alright" message)
+- Red warning icon with badge count when alerts are active
+- Real-time Caltrain service disruption notifications
+
+### 📍 Station Selection
+- Dedicated Stations tab for easy configuration
 - Select any two Caltrain stations for your commute
 - Supports all 27 Caltrain stations from Gilroy to San Francisco
-- Secure API key storage in iOS Keychain
-- Easy station selection with scrollable picker wheels
+- Visual route preview with northbound/southbound indicators
+
+### ⚙️ Settings
+- Secure API key management for 511.org and Ticketmaster
+- All credentials stored in iOS Keychain
+- About page with data attribution and compliance info
 
 ## Setup
 
-1. Get a free API key from [511.org](https://511.org/open-data/token)
-2. Build and run the app in Xcode
-3. On first launch, enter your 511.org API key
-4. Go to Settings to select your stations:
-   - **Southern Station**: Your southern station (e.g., Mountain View)
-   - **Northern Station**: Your northern station (e.g., 22nd Street)
+### Required API Keys
+
+1. **511.org API Key** (Required for train tracking)
+   - Get free key: [511.org/open-data/token](https://511.org/open-data/token)
+   - Used for real-time Caltrain data and service alerts
+
+2. **Ticketmaster API Key** (Optional for events)
+   - Get free key: [developer.ticketmaster.com](https://developer.ticketmaster.com)
+   - Used for Bay Area events discovery
+
+### First Launch
+
+1. Build and run the app in Xcode
+2. On first launch, enter your 511.org API key
+3. Go to **Stations** tab to select your two stations:
+   - **Southern Station**: Your station closer to San Jose (e.g., Mountain View)
+   - **Northern Station**: Your station closer to SF (e.g., 22nd Street)
+4. (Optional) Go to **Settings** tab to add Ticketmaster API key for events
 5. The app will show:
-   - Northbound trains from southern → northern station
-   - Southbound trains from northern → southern station
+   - **Trains**: Northbound (southern → northern) and Southbound (northern → southern)
+   - **Events**: Today's events in the Bay Area
+   - **Alerts**: Service disruptions with visual status
+   - **Stations**: Configure your commute stations
+   - **Settings**: Manage API keys and view about info
 
 ## Requirements
 
