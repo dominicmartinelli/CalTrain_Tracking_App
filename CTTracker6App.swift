@@ -642,9 +642,9 @@ struct ServiceDeliveryNode: Decodable {
 
     enum CodingKeys: String, CodingKey { case StopMonitoringDelivery }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let many = try? c.decode([StopMonitoringDeliveryNode].self, forKey: .StopMonitoringDelivery) {
+        if let many = try? c.decode(Array<StopMonitoringDeliveryNode>.self, forKey: .StopMonitoringDelivery) {
             self.StopMonitoringDelivery = many
         } else if let one = try? c.decode(StopMonitoringDeliveryNode.self, forKey: .StopMonitoringDelivery) {
             self.StopMonitoringDelivery = [one]
@@ -674,7 +674,7 @@ struct MonitoredVehicleJourneyNode: Decodable {
         case LineRef, DirectionRef, DestinationName, MonitoredCall, FramedVehicleJourneyRef
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.LineRef = try? c.decodeIfPresent(String.self, forKey: .LineRef)
         self.DirectionRef = try? c.decodeIfPresent(String.self, forKey: .DirectionRef)
@@ -683,7 +683,7 @@ struct MonitoredVehicleJourneyNode: Decodable {
 
         if let s = try? c.decodeIfPresent(String.self, forKey: .DestinationName) {
             self.DestinationName = s
-        } else if let arr = try? c.decodeIfPresent([String].self, forKey: .DestinationName) {
+        } else if let arr = try? c.decodeIfPresent(Array<String>.self, forKey: .DestinationName) {
             self.DestinationName = arr.first
         } else {
             self.DestinationName = nil
@@ -695,25 +695,25 @@ struct FramedVehicleJourneyRefNode: Decodable { let DatedVehicleJourneyRef: Stri
 struct MonitoredCallNode: Decodable { let AimedDepartureTime: String? }
 
 // MARK: - SIRI-SX Service Alerts models
-struct SiriSXEnvelope: Decodable {
-    let Siri: SiriSXBody?
-    let ServiceDelivery: SiriSXServiceDelivery?
+struct AlertsEnvelope: Decodable {
+    let Siri: AlertsSiriBody?
+    let ServiceDelivery: AlertsServiceDelivery?
 }
 
-struct SiriSXBody: Decodable {
-    let ServiceDelivery: SiriSXServiceDelivery
+struct AlertsSiriBody: Decodable {
+    let ServiceDelivery: AlertsServiceDelivery
 }
 
-struct SiriSXServiceDelivery: Decodable {
-    let SituationExchangeDelivery: [SituationExchangeDelivery]?
+struct AlertsServiceDelivery: Decodable {
+    let SituationExchangeDelivery: [AlertsSituationExchangeDelivery]?
 
     enum CodingKeys: String, CodingKey { case SituationExchangeDelivery }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let many = try? c.decode([SituationExchangeDelivery].self, forKey: .SituationExchangeDelivery) {
+        if let many = try? c.decode(Array<AlertsSituationExchangeDelivery>.self, forKey: .SituationExchangeDelivery) {
             self.SituationExchangeDelivery = many
-        } else if let one = try? c.decode(SituationExchangeDelivery.self, forKey: .SituationExchangeDelivery) {
+        } else if let one = try? c.decode(AlertsSituationExchangeDelivery.self, forKey: .SituationExchangeDelivery) {
             self.SituationExchangeDelivery = [one]
         } else {
             self.SituationExchangeDelivery = nil
@@ -721,20 +721,20 @@ struct SiriSXServiceDelivery: Decodable {
     }
 }
 
-struct SituationExchangeDelivery: Decodable {
-    let Situations: SituationsWrapper?
+struct AlertsSituationExchangeDelivery: Decodable {
+    let Situations: AlertsSituationsWrapper?
 }
 
-struct SituationsWrapper: Decodable {
-    let PtSituationElement: [PtSituationElement]?
+struct AlertsSituationsWrapper: Decodable {
+    let PtSituationElement: [AlertsPtSituationElement]?
 
     enum CodingKeys: String, CodingKey { case PtSituationElement }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let many = try? c.decode([PtSituationElement].self, forKey: .PtSituationElement) {
+        if let many = try? c.decode(Array<AlertsPtSituationElement>.self, forKey: .PtSituationElement) {
             self.PtSituationElement = many
-        } else if let one = try? c.decode(PtSituationElement.self, forKey: .PtSituationElement) {
+        } else if let one = try? c.decode(AlertsPtSituationElement.self, forKey: .PtSituationElement) {
             self.PtSituationElement = [one]
         } else {
             self.PtSituationElement = nil
@@ -742,7 +742,7 @@ struct SituationsWrapper: Decodable {
     }
 }
 
-struct PtSituationElement: Decodable {
+struct AlertsPtSituationElement: Decodable {
     let SituationNumber: String?
     let CreationTime: String?
     let Summary: String?
@@ -770,7 +770,7 @@ struct SIRIService {
             .trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) ?? raw
 
         do {
-            let env = try JSONDecoder().decode(SiriSXEnvelope.self, from: cleaned)
+            let env = try JSONDecoder().decode(AlertsEnvelope.self, from: cleaned)
             let sd = env.Siri?.ServiceDelivery ?? env.ServiceDelivery
             let situations = sd?.SituationExchangeDelivery?.first?.Situations?.PtSituationElement ?? []
 
