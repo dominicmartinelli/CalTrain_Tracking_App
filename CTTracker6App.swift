@@ -41,6 +41,7 @@ func isLikelyAPIKey(_ key: String) -> Bool {
 @main
 struct CaltrainCheckerApp: App {
     @StateObject private var app = AppState()
+    @State private var showSplash = true
 
     init() {
         // Seed Keychain from embedded key if none present
@@ -52,8 +53,39 @@ struct CaltrainCheckerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(app)
+            ZStack {
+                RootView()
+                    .environmentObject(app)
+
+                if showSplash {
+                    SplashScreen()
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation(.easeOut(duration: 0.5)) {
+                        showSplash = false
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Splash Screen
+struct SplashScreen: View {
+    var body: some View {
+        ZStack {
+            Color(red: 0.85, green: 0.75, blue: 0.65)
+                .ignoresSafeArea()
+
+            Image("LaunchImage")
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 400)
+                .padding(40)
         }
     }
 }
@@ -274,6 +306,14 @@ struct StationsScreen: View {
                 }
             }
             .navigationTitle("Stations")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
+            }
         }
     }
 }
@@ -367,6 +407,14 @@ struct SettingsScreen: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
+            }
             .onAppear {
                 apiKey511 = Keychain.shared["api_511"] ?? ""
                 apiKeyTicketmaster = Keychain.shared["api_ticketmaster"] ?? ""
@@ -483,6 +531,14 @@ struct AboutScreen: View {
         }
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Image("LogoIcon")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 32)
+            }
+        }
     }
 }
 
@@ -549,6 +605,14 @@ struct TrainsScreen: View {
             }
             .padding(.horizontal)
             .navigationTitle("Caltrain")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
+            }
             .task { await load() } // initial fetch
             .onChange(of: refDate, initial: false) { _, _ in // iOS 17 two-arg
                 Task { await load() }
@@ -675,6 +739,14 @@ struct AlertsScreen: View {
                 }
             }
             .navigationTitle("Service Alerts")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
+            }
         }
     }
 }
@@ -723,6 +795,12 @@ struct EventsScreen: View {
             }
             .navigationTitle("Bay Area Events")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await load() }
