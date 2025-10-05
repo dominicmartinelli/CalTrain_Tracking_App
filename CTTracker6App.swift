@@ -154,8 +154,8 @@ struct RootView: View {
         TabView(selection: $tab) {
             TrainsScreen(sharedAlerts: $alerts)
                 .tabItem { Label("Trains", systemImage: "train.side.front.car") }.tag(0)
-            GiantsScreen()
-                .tabItem { Label("Giants", systemImage: "baseball") }.tag(1)
+            EventsScreen()
+                .tabItem { Label("Events", systemImage: "calendar") }.tag(1)
             AlertsScreen(alerts: $alerts, isLoading: $alertsLoading)
                 .tabItem {
                     Label("Alerts", systemImage: alerts.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -197,9 +197,12 @@ struct SettingsScreen: View {
     @EnvironmentObject private var app: AppState
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
-    @State private var apiKey: String = ""
-    @State private var status: String = ""
-    @State private var statusColor: Color = .secondary
+    @State private var apiKey511: String = ""
+    @State private var apiKeyTicketmaster: String = ""
+    @State private var status511: String = ""
+    @State private var statusTicketmaster: String = ""
+    @State private var status511Color: Color = .secondary
+    @State private var statusTicketmasterColor: Color = .secondary
 
     private var selectedNorthbound: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -231,22 +234,44 @@ struct SettingsScreen: View {
                 }
 
                 Section("511.org API") {
-                    SecureField("API Key", text: $apiKey)
-                    if !status.isEmpty { Text(status).foregroundStyle(statusColor) }
+                    SecureField("API Key", text: $apiKey511)
+                    if !status511.isEmpty { Text(status511).foregroundStyle(status511Color) }
                     HStack {
-                        Button("Save") { save() }
-                        Button("Verify") { verify() }
+                        Button("Save") { save511() }
+                        Button("Verify") { verify511() }
                         Button("Clear") {
                             app.clearKey()
-                            apiKey = ""
-                            status = "Cleared from Keychain."
-                            statusColor = .orange
+                            apiKey511 = ""
+                            status511 = "Cleared from Keychain."
+                            status511Color = .orange
                         }
                         .tint(.red)
                     }
                     if let stored = Keychain.shared["api_511"], !stored.isEmpty {
                         LabeledContent("Stored", value: Keychain.masked(stored))
                     }
+                }
+
+                Section("Ticketmaster API") {
+                    SecureField("API Key", text: $apiKeyTicketmaster)
+                    if !statusTicketmaster.isEmpty { Text(statusTicketmaster).foregroundStyle(statusTicketmasterColor) }
+                    HStack {
+                        Button("Save") { saveTicketmaster() }
+                        Button("Verify") { verifyTicketmaster() }
+                        Button("Clear") {
+                            Keychain.shared["api_ticketmaster"] = nil
+                            apiKeyTicketmaster = ""
+                            statusTicketmaster = "Cleared from Keychain."
+                            statusTicketmasterColor = .orange
+                        }
+                        .tint(.red)
+                    }
+                    if let stored = Keychain.shared["api_ticketmaster"], !stored.isEmpty {
+                        LabeledContent("Stored", value: Keychain.masked(stored))
+                    }
+                    Text("Get your free API key from developer.ticketmaster.com")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section {
                     NavigationLink {
@@ -261,26 +286,46 @@ struct SettingsScreen: View {
             }
             .navigationTitle("Settings")
             .onAppear {
-                apiKey = Keychain.shared["api_511"] ?? ""
-                verify()
+                apiKey511 = Keychain.shared["api_511"] ?? ""
+                apiKeyTicketmaster = Keychain.shared["api_ticketmaster"] ?? ""
+                verify511()
+                verifyTicketmaster()
             }
         }
     }
 
-    private func save() {
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func save511() {
+        let trimmed = apiKey511.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isLikelyAPIKey(trimmed) else {
-            status = "Please enter a valid key."
-            statusColor = .red
+            status511 = "Please enter a valid key."
+            status511Color = .red
             return
         }
         app.saveKey(trimmed)
-        verify()
+        verify511()
     }
-    private func verify() {
+
+    private func verify511() {
         let current = Keychain.shared["api_511"] ?? ""
-        if !current.isEmpty { status = "Saved ✓  (\(Keychain.masked(current)))"; statusColor = .green }
-        else { status = "No key in Keychain."; statusColor = .red }
+        if !current.isEmpty { status511 = "Saved ✓  (\(Keychain.masked(current)))"; status511Color = .green }
+        else { status511 = "No key in Keychain."; status511Color = .red }
+    }
+
+    private func saveTicketmaster() {
+        let trimmed = apiKeyTicketmaster.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLikelyAPIKey(trimmed) else {
+            statusTicketmaster = "Please enter a valid key."
+            statusTicketmasterColor = .red
+            return
+        }
+        Keychain.shared["api_ticketmaster"] = trimmed
+        verifyTicketmaster()
+    }
+
+    private func verifyTicketmaster() {
+        let current = Keychain.shared["api_ticketmaster"] ?? ""
+        if !current.isEmpty { statusTicketmaster = "Saved ✓  (\(Keychain.masked(current)))"; statusTicketmasterColor = .green }
+        else { statusTicketmaster = "No key in Keychain."; statusTicketmasterColor = .red }
     }
 }
 
@@ -538,45 +583,106 @@ struct AlertsScreen: View {
     }
 }
 
-// MARK: - Giants UI
-struct GiantsScreen: View {
-    @State private var info: GiantsGameInfo?
+// MARK: - Events UI
+struct EventsScreen: View {
+    @State private var events: [BayAreaEvent] = []
     @State private var loading = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                if loading { ProgressView("Checking schedule…") }
-                if let error { Text(error).foregroundStyle(.red) }
-                if let info = info {
-                    VStack(spacing: 8) {
-                        Text(info.title).font(.title3).bold()
-                        Text(info.localTime.formatted(date: .omitted, time: .shortened))
-                        if info.isDayGame { Label("Day game today — Caltrain may be busy", systemImage: "exclamationmark.triangle") }
-                    }
-                    .padding()
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                } else {
-                    Text("No Giants home game today (or couldn’t fetch).").foregroundStyle(.secondary)
+            VStack {
+                if loading { ProgressView("Loading events…").padding() }
+                if let error {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .padding()
+                        .textSelection(.enabled)
                 }
 
-                Button { Task { await load() } } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                if events.isEmpty && !loading && error == nil {
+                    VStack(spacing: 16) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.system(size: 60))
+                            .foregroundStyle(.secondary)
+                        Text("No upcoming events found")
+                            .foregroundStyle(.secondary)
+                        Text("Add your Ticketmaster API key in Settings")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding()
                 }
-                .buttonStyle(.borderedProminent)
+
+                if !events.isEmpty {
+                    List {
+                        ForEach(events) { event in
+                            EventRow(event: event)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
 
                 Spacer()
             }
-            .padding()
-            .navigationTitle("Giants")
+            .navigationTitle("Bay Area Events")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await load() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
             .task { await load() }
         }
     }
 
     func load() async {
-        loading = true; defer { loading = false }; error = nil
-        do { info = try await GiantsService.todayHomeGame() } catch { self.error = (error as NSError).localizedDescription }
+        loading = true
+        defer { loading = false }
+        error = nil
+
+        guard let key = Keychain.shared["api_ticketmaster"], !key.isEmpty else {
+            error = "Add your Ticketmaster API key in Settings."
+            return
+        }
+
+        do {
+            events = try await TicketmasterService.searchEvents(apiKey: key)
+        } catch {
+            self.error = (error as NSError).localizedDescription
+        }
+    }
+}
+
+struct EventRow: View {
+    let event: BayAreaEvent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(event.name)
+                .font(.headline)
+
+            if let venue = event.venueName {
+                Label(venue, systemImage: "mappin.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let date = event.date {
+                Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let url = event.url {
+                Link("Get Tickets", destination: url)
+                    .font(.caption)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -679,6 +785,14 @@ struct ServiceAlert: Identifiable, Hashable {
     let description: String?
     let severity: String?
     let creationTime: Date?
+}
+
+struct BayAreaEvent: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let date: Date?
+    let venueName: String?
+    let url: URL?
 }
 
 actor HTTPClient {
@@ -943,39 +1057,82 @@ struct SIRIService {
     }
 }
 
-// MARK: - Giants helper
-struct GiantsGameInfo: Identifiable { let id = UUID(); let title: String; let localTime: Date; let isDayGame: Bool }
-enum Teams { static let giantsId = 137 }
-
-struct GiantsService {
-    static func todayHomeGame() async throws -> GiantsGameInfo? {
-        let dateStr = Date.now.formatted(.iso8601.year().month().day())
-        var comps = URLComponents(string: "https://statsapi.mlb.com/api/v1/schedule")!
+// MARK: - Ticketmaster API
+struct TicketmasterService {
+    static func searchEvents(apiKey: String, city: String = "San Francisco", radius: String = "50") async throws -> [BayAreaEvent] {
+        var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json")!
         comps.queryItems = [
-            .init(name: "sportId", value: "1"),
-            .init(name: "teamId", value: String(Teams.giantsId)),
-            .init(name: "date", value: dateStr)
+            .init(name: "apikey", value: apiKey),
+            .init(name: "city", value: city),
+            .init(name: "radius", value: radius),
+            .init(name: "unit", value: "miles"),
+            .init(name: "size", value: "20"),
+            .init(name: "sort", value: "date,asc")
         ]
-        let (data, http) = try await HTTPClient.shared.get(url: comps.url!)
-        guard (200..<300).contains(http.statusCode) else { return nil }
-        let obj = try JSONSerialization.jsonObject(with: data) as! [String:Any]
-        guard let dates = obj["dates"] as? [[String:Any]], let day = dates.first else { return nil }
-        for g in (day["games"] as? [[String:Any]] ?? []) {
-            guard
-                let teams = g["teams"] as? [String:Any],
-                let home = (teams["home"] as? [String:Any])?["team"] as? [String:Any],
-                let homeId = home["id"] as? Int,
-                let awayName = ((teams["away"] as? [String:Any])?["team"] as? [String:Any])?["name"] as? String,
-                homeId == Teams.giantsId
-            else { continue }
 
-            let df = ISO8601DateFormatter(); df.formatOptions = [.withInternetDateTime]
-            guard let utc = df.date(from: (g["gameDate"] as? String) ?? "") else { continue }
-            let local = utc
-            let hour = Calendar.current.component(.hour, from: local)
-            return GiantsGameInfo(title: "Giants vs. \(awayName)", localTime: local, isDayGame: hour < 18)
+        print("🎟️ Fetching Ticketmaster events from: \(comps.url!)")
+        let (data, http) = try await HTTPClient.shared.get(url: comps.url!)
+        guard (200..<300).contains(http.statusCode) else {
+            let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+            print("🎟️ Ticketmaster HTTP error: \(http.statusCode)")
+            throw NSError(domain: "Ticketmaster", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
         }
-        return nil
+
+        do {
+            let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            guard let embedded = json["_embedded"] as? [String: Any],
+                  let eventsArray = embedded["events"] as? [[String: Any]] else {
+                print("🎟️ No events found in response")
+                return []
+            }
+
+            var events: [BayAreaEvent] = []
+            let df = ISO8601DateFormatter()
+
+            for eventData in eventsArray {
+                guard let id = eventData["id"] as? String,
+                      let name = eventData["name"] as? String else { continue }
+
+                // Parse date
+                var date: Date?
+                if let dates = eventData["dates"] as? [String: Any],
+                   let start = dates["start"] as? [String: Any],
+                   let dateTimeStr = start["dateTime"] as? String {
+                    date = df.date(from: dateTimeStr)
+                }
+
+                // Parse venue
+                var venueName: String?
+                if let embedded = eventData["_embedded"] as? [String: Any],
+                   let venues = embedded["venues"] as? [[String: Any]],
+                   let firstVenue = venues.first {
+                    venueName = firstVenue["name"] as? String
+                }
+
+                // Parse URL
+                var eventURL: URL?
+                if let urlString = eventData["url"] as? String {
+                    eventURL = URL(string: urlString)
+                }
+
+                let event = BayAreaEvent(
+                    id: id,
+                    name: name,
+                    date: date,
+                    venueName: venueName,
+                    url: eventURL
+                )
+                events.append(event)
+            }
+
+            print("🎟️ Found \(events.count) events")
+            return events
+        } catch {
+            print("🎟️ Failed to decode: \(error)")
+            throw NSError(domain: "Ticketmaster.decode", code: 0,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to parse events: \(error.localizedDescription)"])
+        }
     }
 }
 
