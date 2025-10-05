@@ -497,7 +497,7 @@ struct InsightsView: View {
             } header: {
                 Text("Environmental Impact")
             } footer: {
-                Text("Based on average car emissions of 0.89 lbs CO₂ per mile")
+                Text("Manually track trips you've taken for accurate CO₂ savings. Based on average car emissions of 0.89 lbs CO₂ per mile.")
                     .font(.caption2)
             }
 
@@ -1579,13 +1579,15 @@ struct CommuteHistoryEntry: Codable, Identifiable {
     let direction: String // "North" or "South"
     let timeOfDay: Int // Hour of day (0-23)
     let dayOfWeek: Int // 1=Sunday, 7=Saturday
+    var wasTripTaken: Bool = false // true = user confirmed they took this trip
 
-    init(fromStopCode: String, toStopCode: String, direction: String) {
+    init(fromStopCode: String, toStopCode: String, direction: String, wasTripTaken: Bool = false) {
         self.id = UUID()
         self.timestamp = Date()
         self.fromStopCode = fromStopCode
         self.toStopCode = toStopCode
         self.direction = direction
+        self.wasTripTaken = wasTripTaken
 
         let calendar = Calendar.current
         self.timeOfDay = calendar.component(.hour, from: timestamp)
@@ -1675,20 +1677,29 @@ class CommuteHistoryStorage {
         }.sorted { $0.frequency > $1.frequency }
     }
 
-    // Calculate CO2 savings
+    // Calculate CO2 savings - only count confirmed trips
     func calculateCO2Savings() -> (trips: Int, co2SavedLbs: Double) {
         let history = loadHistory()
 
-        // Filter to last 30 days
+        // Filter to last 30 days AND only trips user confirmed they took
         let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
-        let recentTrips = history.filter { $0.timestamp >= thirtyDaysAgo }
+        let confirmedTrips = history.filter { $0.timestamp >= thirtyDaysAgo && $0.wasTripTaken }
 
         // Average Caltrain trip ~25 miles, car emits ~0.89 lbs CO2/mile
         // So each train trip saves ~22 lbs CO2
         let co2PerTrip = 22.0
-        let totalSaved = Double(recentTrips.count) * co2PerTrip
+        let totalSaved = Double(confirmedTrips.count) * co2PerTrip
 
-        return (trips: recentTrips.count, co2SavedLbs: totalSaved)
+        return (trips: confirmedTrips.count, co2SavedLbs: totalSaved)
+    }
+
+    // Mark a trip as taken
+    func markTripTaken(entryId: UUID) {
+        var history = loadHistory()
+        if let index = history.firstIndex(where: { $0.id == entryId }) {
+            history[index].wasTripTaken = true
+            saveHistory(history)
+        }
     }
 
     // Get weekly stats
@@ -1806,52 +1817,68 @@ class WeatherService: ObservableObject {
     private let apiKey = "demo" // Will use free tier endpoint
 
     func fetchWeather(for station: CaltrainStop) async {
-        // Use wttr.in - completely free, no API key needed
-        let urlString = "https://wttr.in/\(station.latitude),\(station.longitude)?format=j1"
+        // Use Open-Meteo - completely free, no API key, very reliable
+        // API: https://open-meteo.com/en/docs
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(station.latitude)&longitude=\(station.longitude)&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America/Los_Angeles"
 
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString) else {
+            print("❌ Invalid weather URL for \(station.name)")
+            return
+        }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
 
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let currentCondition = (json["current_condition"] as? [[String: Any]])?.first,
-               let tempF = currentCondition["temp_F"] as? String,
-               let weatherDesc = (currentCondition["weatherDesc"] as? [[String: Any]])?.first?["value"] as? String,
-               let weatherCode = currentCondition["weatherCode"] as? String {
+               let current = json["current"] as? [String: Any],
+               let temp = current["temperature_2m"] as? Double,
+               let weatherCode = current["weather_code"] as? Int {
 
-                let temp = Double(tempF) ?? 0
-                let emoji = getWeatherEmoji(for: weatherCode, description: weatherDesc)
+                let emoji = getWeatherEmojiFromCode(weatherCode)
+                let condition = getWeatherDescription(weatherCode)
 
-                currentWeather[station.stopCode] = (temp: temp, condition: weatherDesc, symbol: emoji)
-                print("✅ Weather fetched for \(station.name): \(Int(temp))°F, \(weatherDesc)")
+                currentWeather[station.stopCode] = (temp: temp, condition: condition, symbol: emoji)
+                print("✅ Weather fetched for \(station.name): \(Int(temp))°F, \(condition)")
+            } else {
+                print("❌ Failed to parse weather JSON for \(station.name)")
             }
         } catch {
             print("❌ Weather fetch failed for \(station.name): \(error.localizedDescription)")
         }
     }
 
-    func getWeatherEmoji(for weatherCode: String, description: String) -> String {
-        // Map weather codes to emoji
-        // wttr.in weather codes: https://www.worldweatheronline.com/developer/api/docs/weather-icons.aspx
-        let desc = description.lowercased()
+    // Open-Meteo weather code mapping
+    // https://open-meteo.com/en/docs
+    func getWeatherEmojiFromCode(_ code: Int) -> String {
+        switch code {
+        case 0: return "☀️" // Clear sky
+        case 1, 2: return "🌤️" // Mainly clear, partly cloudy
+        case 3: return "☁️" // Overcast
+        case 45, 48: return "🌫️" // Fog
+        case 51, 53, 55: return "🌦️" // Drizzle
+        case 61, 63, 65: return "🌧️" // Rain
+        case 71, 73, 75, 77: return "❄️" // Snow
+        case 80, 81, 82: return "🌧️" // Rain showers
+        case 85, 86: return "🌨️" // Snow showers
+        case 95, 96, 99: return "⛈️" // Thunderstorm
+        default: return "🌤️"
+        }
+    }
 
-        if desc.contains("rain") || desc.contains("drizzle") {
-            return "🌧️"
-        } else if desc.contains("snow") || desc.contains("sleet") {
-            return "❄️"
-        } else if desc.contains("thunder") || desc.contains("storm") {
-            return "⛈️"
-        } else if desc.contains("cloud") || desc.contains("overcast") {
-            return "☁️"
-        } else if desc.contains("fog") || desc.contains("mist") {
-            return "🌫️"
-        } else if desc.contains("clear") || desc.contains("sunny") {
-            return "☀️"
-        } else if desc.contains("partly") {
-            return "⛅"
-        } else {
-            return "🌤️"
+    func getWeatherDescription(_ code: Int) -> String {
+        switch code {
+        case 0: return "Clear"
+        case 1: return "Mostly Clear"
+        case 2: return "Partly Cloudy"
+        case 3: return "Overcast"
+        case 45, 48: return "Foggy"
+        case 51, 53, 55: return "Drizzle"
+        case 61, 63, 65: return "Rainy"
+        case 71, 73, 75, 77: return "Snowy"
+        case 80, 81, 82: return "Rain Showers"
+        case 85, 86: return "Snow Showers"
+        case 95, 96, 99: return "Thunderstorm"
+        default: return "Unknown"
         }
     }
 }
