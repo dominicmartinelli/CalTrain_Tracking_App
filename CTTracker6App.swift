@@ -167,7 +167,6 @@ struct RootView: View {
 // MARK: - Settings
 struct SettingsScreen: View {
     @EnvironmentObject private var app: AppState
-    @AppStorage("username") private var username = ""
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @State private var apiKey: String = ""
@@ -185,41 +184,22 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Profile") {
-                    TextField("Username (optional)", text: $username)
-                        .textInputAutocapitalization(.never)
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Southern Station")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Picker("Southern Station", selection: $northboundStopCode) {
-                            ForEach(CaltrainStops.northbound) { stop in
-                                Text(stop.name).tag(stop.stopCode)
-                            }
+                Section("Train Stations") {
+                    Picker("Southern Station", selection: $northboundStopCode) {
+                        ForEach(CaltrainStops.northbound) { stop in
+                            Text(stop.name).tag(stop.stopCode)
                         }
-                        .pickerStyle(.wheel)
-                        .frame(height: 120)
                     }
+                    .pickerStyle(.wheel)
+                    .frame(height: 80)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Northern Station")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Picker("Northern Station", selection: $southboundStopCode) {
-                            ForEach(CaltrainStops.southbound) { stop in
-                                Text(stop.name).tag(stop.stopCode)
-                            }
+                    Picker("Northern Station", selection: $southboundStopCode) {
+                        ForEach(CaltrainStops.southbound) { stop in
+                            Text(stop.name).tag(stop.stopCode)
                         }
-                        .pickerStyle(.wheel)
-                        .frame(height: 120)
                     }
-                } header: {
-                    Text("Train Stations")
-                } footer: {
-                    Text("Select your two stations. Northbound trains go from southern → northern station. Southbound trains go from northern → southern station.")
+                    .pickerStyle(.wheel)
+                    .frame(height: 80)
                 }
 
                 Section("511.org API") {
@@ -240,24 +220,15 @@ struct SettingsScreen: View {
                         LabeledContent("Stored", value: Keychain.masked(stored))
                     }
                 }
-                Section("About") {
-                    LabeledContent("Version",
-                                   value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
-                }
-
-                Section("Data Sources") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Transit data provided by 511.org")
-                            .font(.footnote)
-                        Text("Baseball data provided by MLB Stats API")
-                            .font(.footnote)
+                Section {
+                    NavigationLink {
+                        AboutScreen()
+                    } label: {
+                        HStack {
+                            Label("About", systemImage: "info.circle")
+                            Spacer()
+                        }
                     }
-                }
-
-                Section("Disclaimer") {
-                    Text("Transit times are estimates only. Data is provided 'as is' without warranty. Always verify departure times and exercise reasonable judgment when planning your trip.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Settings")
@@ -285,6 +256,67 @@ struct SettingsScreen: View {
     }
 }
 
+// MARK: - About Screen
+struct AboutScreen: View {
+    var body: some View {
+        List {
+            Section("Version") {
+                LabeledContent("App Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+            }
+
+            Section("Data Sources") {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Transit Data")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("Provided by 511.org")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Baseball Data")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("Provided by MLB Stats API")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Disclaimer") {
+                Text("Transit times are estimates only. Data is provided 'as is' without warranty of any kind. Always verify departure times before traveling and exercise reasonable judgment when planning your trip.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Terms of Use") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("This app uses data from 511.org under their authorized API access terms.")
+                        .font(.footnote)
+
+                    Text("This app is for personal use only. Commercial distribution requires written authorization from MTC (Metropolitan Transportation Commission).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Link("View 511.org Terms", destination: URL(string: "https://511.org/about/terms")!)
+                        .font(.footnote)
+                }
+            }
+
+            Section("Credits") {
+                Text("🤖 Generated with Claude Code")
+                    .font(.footnote)
+            }
+        }
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 // MARK: - Trains UI
 struct TrainsScreen: View {
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
@@ -292,6 +324,7 @@ struct TrainsScreen: View {
     @State private var refDate = Date()
     @State private var north: [Departure] = []
     @State private var south: [Departure] = []
+    @State private var alerts: [ServiceAlert] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -325,6 +358,17 @@ struct TrainsScreen: View {
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
 
                 List {
+                    if !alerts.isEmpty {
+                        Section {
+                            ForEach(alerts) { alert in
+                                ServiceAlertRow(alert: alert)
+                            }
+                        } header: {
+                            Label("Service Alerts", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
                     Section("Northbound from \(northboundStop.name)") {
                         ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name) }
                     }
@@ -361,11 +405,45 @@ struct TrainsScreen: View {
         do {
             async let nb = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
             async let sb = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
-            let (n, s) = try await (nb, sb)
-            north = n; south = s
+            async let al = SIRIService.serviceAlerts(apiKey: key)
+            let (n, s, a) = try await (nb, sb, al)
+            north = n; south = s; alerts = a
         } catch {
             self.error = (error as NSError).localizedDescription
         }
+    }
+}
+
+struct ServiceAlertRow: View {
+    let alert: ServiceAlert
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(alert.summary)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+                if let severity = alert.severity {
+                    Text(severity)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let description = alert.description, !description.isEmpty {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let creationTime = alert.creationTime {
+                Text(creationTime.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -524,6 +602,14 @@ struct Departure: Identifiable, Hashable {
     let destination: String?
 }
 
+struct ServiceAlert: Identifiable, Hashable {
+    let id: String
+    let summary: String
+    let description: String?
+    let severity: String?
+    let creationTime: Date?
+}
+
 actor HTTPClient {
     static let shared = HTTPClient()
     func get(url: URL, headers: [String:String] = [:]) async throws -> (Data, HTTPURLResponse) {
@@ -608,8 +694,111 @@ struct MonitoredVehicleJourneyNode: Decodable {
 struct FramedVehicleJourneyRefNode: Decodable { let DatedVehicleJourneyRef: String? }
 struct MonitoredCallNode: Decodable { let AimedDepartureTime: String? }
 
+// MARK: - SIRI-SX Service Alerts models
+struct SiriSXEnvelope: Decodable {
+    let Siri: SiriSXBody?
+    let ServiceDelivery: SiriSXServiceDelivery?
+}
+
+struct SiriSXBody: Decodable {
+    let ServiceDelivery: SiriSXServiceDelivery
+}
+
+struct SiriSXServiceDelivery: Decodable {
+    let SituationExchangeDelivery: [SituationExchangeDelivery]?
+
+    enum CodingKeys: String, CodingKey { case SituationExchangeDelivery }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let many = try? c.decode([SituationExchangeDelivery].self, forKey: .SituationExchangeDelivery) {
+            self.SituationExchangeDelivery = many
+        } else if let one = try? c.decode(SituationExchangeDelivery.self, forKey: .SituationExchangeDelivery) {
+            self.SituationExchangeDelivery = [one]
+        } else {
+            self.SituationExchangeDelivery = nil
+        }
+    }
+}
+
+struct SituationExchangeDelivery: Decodable {
+    let Situations: SituationsWrapper?
+}
+
+struct SituationsWrapper: Decodable {
+    let PtSituationElement: [PtSituationElement]?
+
+    enum CodingKeys: String, CodingKey { case PtSituationElement }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let many = try? c.decode([PtSituationElement].self, forKey: .PtSituationElement) {
+            self.PtSituationElement = many
+        } else if let one = try? c.decode(PtSituationElement.self, forKey: .PtSituationElement) {
+            self.PtSituationElement = [one]
+        } else {
+            self.PtSituationElement = nil
+        }
+    }
+}
+
+struct PtSituationElement: Decodable {
+    let SituationNumber: String?
+    let CreationTime: String?
+    let Summary: String?
+    let Description: String?
+    let Severity: String?
+}
+
 // MARK: - SIRI service
 struct SIRIService {
+    static func serviceAlerts(apiKey: String) async throws -> [ServiceAlert] {
+        var comps = URLComponents(string: "http://api.511.org/transit/servicealerts")!
+        comps.queryItems = [
+            .init(name: "api_key", value: apiKey),
+            .init(name: "agency", value: "CT"),
+            .init(name: "format", value: "json")
+        ]
+        let (raw, http) = try await HTTPClient.shared.get(url: comps.url!)
+        guard (200..<300).contains(http.statusCode) else {
+            let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
+            throw NSError(domain: "SIRI-SX", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
+        }
+
+        let cleaned = String(data: raw, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) ?? raw
+
+        do {
+            let env = try JSONDecoder().decode(SiriSXEnvelope.self, from: cleaned)
+            let sd = env.Siri?.ServiceDelivery ?? env.ServiceDelivery
+            let situations = sd?.SituationExchangeDelivery?.first?.Situations?.PtSituationElement ?? []
+
+            let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let df = ISO8601DateFormatter()
+
+            var alerts: [ServiceAlert] = []
+            for sit in situations {
+                let creationTime = sit.CreationTime.flatMap { dfFrac.date(from: $0) ?? df.date(from: $0) }
+                let summary = sit.Summary ?? "Service Alert"
+                let alert = ServiceAlert(
+                    id: sit.SituationNumber ?? UUID().uuidString,
+                    summary: summary,
+                    description: sit.Description,
+                    severity: sit.Severity,
+                    creationTime: creationTime
+                )
+                alerts.append(alert)
+            }
+            return alerts
+        } catch {
+            let snippet = String(data: cleaned, encoding: .utf8)?.prefix(280) ?? ""
+            throw NSError(domain: "SIRI-SX.decode", code: 0,
+                          userInfo: [NSLocalizedDescriptionKey:
+                                        "Couldn't parse 511 alerts response. \(error.localizedDescription)\n\(snippet)"])
+        }
+    }
+
     static func stopMonitoring(stopCode: String, max: Int = 6, apiKey: String) async throws -> [MonitoredStopVisitNode] {
         var comps = URLComponents(string: "http://api.511.org/transit/StopMonitoring")!
         comps.queryItems = [
