@@ -142,6 +142,8 @@ struct APIKeySetupScreen: View {
 struct RootView: View {
     @EnvironmentObject private var app: AppState
     @State private var tab = 0
+    @State private var alerts: [ServiceAlert] = []
+    @State private var alertsLoading = false
 
     // Bind cover visibility (true when key is missing)
     private var needsKeyBinding: Binding<Bool> {
@@ -150,17 +152,43 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            TrainsScreen()
+            TrainsScreen(sharedAlerts: $alerts)
                 .tabItem { Label("Trains", systemImage: "train.side.front.car") }.tag(0)
             GiantsScreen()
                 .tabItem { Label("Giants", systemImage: "baseball") }.tag(1)
+            AlertsScreen(alerts: $alerts, isLoading: $alertsLoading)
+                .tabItem {
+                    Label("Alerts", systemImage: alerts.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                }
+                .badge(alerts.isEmpty ? nil : alerts.count)
+                .tag(2)
             SettingsScreen()
-                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(2)
+                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
         }
+        .tint(alerts.isEmpty ? .green : .red)
         .fullScreenCover(isPresented: needsKeyBinding) {
             APIKeySetupScreen().environmentObject(app)
         }
-        .onAppear { app.refreshFromKeychain() }
+        .onAppear {
+            app.refreshFromKeychain()
+            Task { await loadAlerts() }
+        }
+        .onChange(of: tab, initial: false) { _, newTab in
+            if newTab == 2 { // Alerts tab
+                Task { await loadAlerts() }
+            }
+        }
+    }
+
+    func loadAlerts() async {
+        guard let key = Keychain.shared["api_511"], !key.isEmpty else { return }
+        alertsLoading = true
+        defer { alertsLoading = false }
+        do {
+            alerts = try await SIRIService.serviceAlerts(apiKey: key)
+        } catch {
+            print("Failed to load alerts: \(error)")
+        }
     }
 }
 
@@ -319,12 +347,12 @@ struct AboutScreen: View {
 
 // MARK: - Trains UI
 struct TrainsScreen: View {
+    @Binding var sharedAlerts: [ServiceAlert]
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @State private var refDate = Date()
     @State private var north: [Departure] = []
     @State private var south: [Departure] = []
-    @State private var alerts: [ServiceAlert] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -358,9 +386,9 @@ struct TrainsScreen: View {
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
 
                 List {
-                    if !alerts.isEmpty {
+                    if !sharedAlerts.isEmpty {
                         Section {
-                            ForEach(alerts) { alert in
+                            ForEach(sharedAlerts) { alert in
                                 ServiceAlertRow(alert: alert)
                             }
                         } header: {
@@ -407,7 +435,7 @@ struct TrainsScreen: View {
             async let sb = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
             async let al = SIRIService.serviceAlerts(apiKey: key)
             let (n, s, a) = try await (nb, sb, al)
-            north = n; south = s; alerts = a
+            north = n; south = s; sharedAlerts = a
         } catch {
             self.error = (error as NSError).localizedDescription
         }
@@ -464,6 +492,49 @@ struct DepartureRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Departure in \(dep.minutes) minutes to \(destinationLabel)")
+    }
+}
+
+// MARK: - Alerts UI
+struct AlertsScreen: View {
+    @Binding var alerts: [ServiceAlert]
+    @Binding var isLoading: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                if isLoading {
+                    ProgressView("Checking for alerts…")
+                        .padding()
+                }
+
+                if alerts.isEmpty && !isLoading {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundStyle(.green)
+
+                        Text("Alright Alright Alright")
+                            .font(.title)
+                            .fontWeight(.bold)
+
+                        Text("No active Caltrain service alerts")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                } else if !alerts.isEmpty {
+                    List {
+                        ForEach(alerts) { alert in
+                            ServiceAlertRow(alert: alert)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Service Alerts")
+        }
     }
 }
 
@@ -759,9 +830,11 @@ struct SIRIService {
             .init(name: "agency", value: "CT"),
             .init(name: "format", value: "json")
         ]
+        print("🚨 Fetching service alerts from: \(comps.url!)")
         let (raw, http) = try await HTTPClient.shared.get(url: comps.url!)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
+            print("🚨 Service alerts HTTP error: \(http.statusCode)")
             throw NSError(domain: "SIRI-SX", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
         }
@@ -773,6 +846,7 @@ struct SIRIService {
             let env = try JSONDecoder().decode(AlertsEnvelope.self, from: cleaned)
             let sd = env.Siri?.ServiceDelivery ?? env.ServiceDelivery
             let situations = sd?.SituationExchangeDelivery?.first?.Situations?.PtSituationElement ?? []
+            print("🚨 Found \(situations.count) service alert situations")
 
             let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             let df = ISO8601DateFormatter()
@@ -781,6 +855,7 @@ struct SIRIService {
             for sit in situations {
                 let creationTime = sit.CreationTime.flatMap { dfFrac.date(from: $0) ?? df.date(from: $0) }
                 let summary = sit.Summary ?? "Service Alert"
+                print("🚨 Alert: \(summary)")
                 let alert = ServiceAlert(
                     id: sit.SituationNumber ?? UUID().uuidString,
                     summary: summary,
@@ -790,9 +865,11 @@ struct SIRIService {
                 )
                 alerts.append(alert)
             }
+            print("🚨 Returning \(alerts.count) service alerts")
             return alerts
         } catch {
             let snippet = String(data: cleaned, encoding: .utf8)?.prefix(280) ?? ""
+            print("🚨 Failed to decode alerts: \(error)")
             throw NSError(domain: "SIRI-SX.decode", code: 0,
                           userInfo: [NSLocalizedDescriptionKey:
                                         "Couldn't parse 511 alerts response. \(error.localizedDescription)\n\(snippet)"])
