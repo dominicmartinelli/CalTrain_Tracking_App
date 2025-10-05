@@ -767,6 +767,16 @@ struct EventRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let nearest = event.nearestStation {
+                Label {
+                    Text("Nearest: \(nearest.station.name) (\(String(format: "%.1f", nearest.distance)) mi)")
+                } icon: {
+                    Image(systemName: "tram.fill")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.blue)
+            }
+
             if let date = event.date {
                 Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
                     .font(.subheadline)
@@ -789,11 +799,30 @@ struct CaltrainStop: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let stopCode: String
+    let latitude: Double
+    let longitude: Double
 
-    init(name: String, stopCode: String) {
+    init(name: String, stopCode: String, latitude: Double, longitude: Double) {
         self.id = stopCode
         self.name = name
         self.stopCode = stopCode
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+
+    // Calculate distance in miles to a given lat/lon using Haversine formula
+    func distanceTo(latitude: Double, longitude: Double) -> Double {
+        let earthRadiusMiles = 3959.0
+        let lat1Rad = self.latitude * .pi / 180
+        let lat2Rad = latitude * .pi / 180
+        let dLat = (latitude - self.latitude) * .pi / 180
+        let dLon = (longitude - self.longitude) * .pi / 180
+
+        let a = sin(dLat/2) * sin(dLat/2) +
+                cos(lat1Rad) * cos(lat2Rad) *
+                sin(dLon/2) * sin(dLon/2)
+        let c = 2 * atan2(sqrt(a), sqrt(1-a))
+        return earthRadiusMiles * c
     }
 }
 
@@ -801,64 +830,64 @@ struct CaltrainStop: Identifiable, Codable, Hashable {
 struct CaltrainStops {
     // Northbound stops (toward San Francisco) - odd numbered stop codes
     static let northbound: [CaltrainStop] = [
-        CaltrainStop(name: "Gilroy", stopCode: "777403"),
-        CaltrainStop(name: "San Martin", stopCode: "777402"),
-        CaltrainStop(name: "Morgan Hill", stopCode: "777401"),
-        CaltrainStop(name: "Blossom Hill", stopCode: "70007"),
-        CaltrainStop(name: "Capitol", stopCode: "70005"),
-        CaltrainStop(name: "Tamien", stopCode: "70003"),
-        CaltrainStop(name: "San Jose Diridon", stopCode: "70261"),
-        CaltrainStop(name: "Santa Clara", stopCode: "70271"),
-        CaltrainStop(name: "Lawrence", stopCode: "70281"),
-        CaltrainStop(name: "Sunnyvale", stopCode: "70291"),
-        CaltrainStop(name: "Mountain View", stopCode: "70211"),
-        CaltrainStop(name: "San Antonio", stopCode: "70221"),
-        CaltrainStop(name: "California Ave", stopCode: "70231"),
-        CaltrainStop(name: "Palo Alto", stopCode: "70241"),
-        CaltrainStop(name: "Menlo Park", stopCode: "70251"),
-        CaltrainStop(name: "Redwood City", stopCode: "70311"),
-        CaltrainStop(name: "San Carlos", stopCode: "70321"),
-        CaltrainStop(name: "Belmont", stopCode: "70331"),
-        CaltrainStop(name: "Hillsdale", stopCode: "70341"),
-        CaltrainStop(name: "San Mateo", stopCode: "70351"),
-        CaltrainStop(name: "Burlingame", stopCode: "70361"),
-        CaltrainStop(name: "Millbrae", stopCode: "70371"),
-        CaltrainStop(name: "San Bruno", stopCode: "70381"),
-        CaltrainStop(name: "South San Francisco", stopCode: "70011"),
-        CaltrainStop(name: "Bayshore", stopCode: "70031"),
-        CaltrainStop(name: "22nd Street", stopCode: "70021"),
-        CaltrainStop(name: "San Francisco", stopCode: "70041")
+        CaltrainStop(name: "Gilroy", stopCode: "777403", latitude: 37.0035, longitude: -121.5682),
+        CaltrainStop(name: "San Martin", stopCode: "777402", latitude: 37.0855, longitude: -121.6106),
+        CaltrainStop(name: "Morgan Hill", stopCode: "777401", latitude: 37.1295, longitude: -121.6503),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70007", latitude: 37.2524, longitude: -121.7983),
+        CaltrainStop(name: "Capitol", stopCode: "70005", latitude: 37.2894, longitude: -121.8421),
+        CaltrainStop(name: "Tamien", stopCode: "70003", latitude: 37.3119, longitude: -121.8841),
+        CaltrainStop(name: "San Jose Diridon", stopCode: "70261", latitude: 37.3297, longitude: -121.9026),
+        CaltrainStop(name: "Santa Clara", stopCode: "70271", latitude: 37.3530, longitude: -121.9364),
+        CaltrainStop(name: "Lawrence", stopCode: "70281", latitude: 37.3705, longitude: -121.9972),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70291", latitude: 37.3784, longitude: -122.0309),
+        CaltrainStop(name: "Mountain View", stopCode: "70211", latitude: 37.3942, longitude: -122.0764),
+        CaltrainStop(name: "San Antonio", stopCode: "70221", latitude: 37.4074, longitude: -122.1070),
+        CaltrainStop(name: "California Ave", stopCode: "70231", latitude: 37.4294, longitude: -122.1426),
+        CaltrainStop(name: "Palo Alto", stopCode: "70241", latitude: 37.4429, longitude: -122.1649),
+        CaltrainStop(name: "Menlo Park", stopCode: "70251", latitude: 37.4546, longitude: -122.1824),
+        CaltrainStop(name: "Redwood City", stopCode: "70311", latitude: 37.4854, longitude: -122.2317),
+        CaltrainStop(name: "San Carlos", stopCode: "70321", latitude: 37.5071, longitude: -122.2604),
+        CaltrainStop(name: "Belmont", stopCode: "70331", latitude: 37.5206, longitude: -122.2756),
+        CaltrainStop(name: "Hillsdale", stopCode: "70341", latitude: 37.5378, longitude: -122.2977),
+        CaltrainStop(name: "San Mateo", stopCode: "70351", latitude: 37.5683, longitude: -122.3238),
+        CaltrainStop(name: "Burlingame", stopCode: "70361", latitude: 37.5797, longitude: -122.3449),
+        CaltrainStop(name: "Millbrae", stopCode: "70371", latitude: 37.5996, longitude: -122.3868),
+        CaltrainStop(name: "San Bruno", stopCode: "70381", latitude: 37.6308, longitude: -122.4112),
+        CaltrainStop(name: "South San Francisco", stopCode: "70011", latitude: 37.6566, longitude: -122.4056),
+        CaltrainStop(name: "Bayshore", stopCode: "70031", latitude: 37.7097, longitude: -122.4016),
+        CaltrainStop(name: "22nd Street", stopCode: "70021", latitude: 37.7571, longitude: -122.3924),
+        CaltrainStop(name: "San Francisco", stopCode: "70041", latitude: 37.7765, longitude: -122.3947)
     ]
 
     // Southbound stops (toward San Jose) - even numbered stop codes
     static let southbound: [CaltrainStop] = [
-        CaltrainStop(name: "San Francisco", stopCode: "70042"),
-        CaltrainStop(name: "22nd Street", stopCode: "70022"),
-        CaltrainStop(name: "Bayshore", stopCode: "70032"),
-        CaltrainStop(name: "South San Francisco", stopCode: "70012"),
-        CaltrainStop(name: "San Bruno", stopCode: "70382"),
-        CaltrainStop(name: "Millbrae", stopCode: "70372"),
-        CaltrainStop(name: "Burlingame", stopCode: "70362"),
-        CaltrainStop(name: "San Mateo", stopCode: "70352"),
-        CaltrainStop(name: "Hillsdale", stopCode: "70342"),
-        CaltrainStop(name: "Belmont", stopCode: "70332"),
-        CaltrainStop(name: "San Carlos", stopCode: "70322"),
-        CaltrainStop(name: "Redwood City", stopCode: "70312"),
-        CaltrainStop(name: "Menlo Park", stopCode: "70252"),
-        CaltrainStop(name: "Palo Alto", stopCode: "70242"),
-        CaltrainStop(name: "California Ave", stopCode: "70232"),
-        CaltrainStop(name: "San Antonio", stopCode: "70222"),
-        CaltrainStop(name: "Mountain View", stopCode: "70212"),
-        CaltrainStop(name: "Sunnyvale", stopCode: "70292"),
-        CaltrainStop(name: "Lawrence", stopCode: "70282"),
-        CaltrainStop(name: "Santa Clara", stopCode: "70272"),
-        CaltrainStop(name: "San Jose Diridon", stopCode: "70262"),
-        CaltrainStop(name: "Tamien", stopCode: "70004"),
-        CaltrainStop(name: "Capitol", stopCode: "70006"),
-        CaltrainStop(name: "Blossom Hill", stopCode: "70008"),
-        CaltrainStop(name: "Morgan Hill", stopCode: "777402"),
-        CaltrainStop(name: "San Martin", stopCode: "777403"),
-        CaltrainStop(name: "Gilroy", stopCode: "777404")
+        CaltrainStop(name: "San Francisco", stopCode: "70042", latitude: 37.7765, longitude: -122.3947),
+        CaltrainStop(name: "22nd Street", stopCode: "70022", latitude: 37.7571, longitude: -122.3924),
+        CaltrainStop(name: "Bayshore", stopCode: "70032", latitude: 37.7097, longitude: -122.4016),
+        CaltrainStop(name: "South San Francisco", stopCode: "70012", latitude: 37.6566, longitude: -122.4056),
+        CaltrainStop(name: "San Bruno", stopCode: "70382", latitude: 37.6308, longitude: -122.4112),
+        CaltrainStop(name: "Millbrae", stopCode: "70372", latitude: 37.5996, longitude: -122.3868),
+        CaltrainStop(name: "Burlingame", stopCode: "70362", latitude: 37.5797, longitude: -122.3449),
+        CaltrainStop(name: "San Mateo", stopCode: "70352", latitude: 37.5683, longitude: -122.3238),
+        CaltrainStop(name: "Hillsdale", stopCode: "70342", latitude: 37.5378, longitude: -122.2977),
+        CaltrainStop(name: "Belmont", stopCode: "70332", latitude: 37.5206, longitude: -122.2756),
+        CaltrainStop(name: "San Carlos", stopCode: "70322", latitude: 37.5071, longitude: -122.2604),
+        CaltrainStop(name: "Redwood City", stopCode: "70312", latitude: 37.4854, longitude: -122.2317),
+        CaltrainStop(name: "Menlo Park", stopCode: "70252", latitude: 37.4546, longitude: -122.1824),
+        CaltrainStop(name: "Palo Alto", stopCode: "70242", latitude: 37.4429, longitude: -122.1649),
+        CaltrainStop(name: "California Ave", stopCode: "70232", latitude: 37.4294, longitude: -122.1426),
+        CaltrainStop(name: "San Antonio", stopCode: "70222", latitude: 37.4074, longitude: -122.1070),
+        CaltrainStop(name: "Mountain View", stopCode: "70212", latitude: 37.3942, longitude: -122.0764),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70292", latitude: 37.3784, longitude: -122.0309),
+        CaltrainStop(name: "Lawrence", stopCode: "70282", latitude: 37.3705, longitude: -121.9972),
+        CaltrainStop(name: "Santa Clara", stopCode: "70272", latitude: 37.3530, longitude: -121.9364),
+        CaltrainStop(name: "San Jose Diridon", stopCode: "70262", latitude: 37.3297, longitude: -121.9026),
+        CaltrainStop(name: "Tamien", stopCode: "70004", latitude: 37.3119, longitude: -121.8841),
+        CaltrainStop(name: "Capitol", stopCode: "70006", latitude: 37.2894, longitude: -121.8421),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70008", latitude: 37.2524, longitude: -121.7983),
+        CaltrainStop(name: "Morgan Hill", stopCode: "777402", latitude: 37.1295, longitude: -121.6503),
+        CaltrainStop(name: "San Martin", stopCode: "777403", latitude: 37.0855, longitude: -121.6106),
+        CaltrainStop(name: "Gilroy", stopCode: "777404", latitude: 37.0035, longitude: -121.5682)
     ]
 
     // Default stops (Mountain View northbound and 22nd Street southbound)
@@ -889,6 +918,28 @@ struct BayAreaEvent: Identifiable, Hashable {
     let date: Date?
     let venueName: String?
     let url: URL?
+    let venueLatitude: Double?
+    let venueLongitude: Double?
+
+    var nearestStation: (station: CaltrainStop, distance: Double)? {
+        guard let lat = venueLatitude, let lon = venueLongitude else { return nil }
+
+        // Get all unique stations (combine northbound and southbound, avoiding duplicates)
+        var allStations: [CaltrainStop] = []
+        var seenNames = Set<String>()
+
+        for station in CaltrainStops.northbound {
+            if !seenNames.contains(station.name) {
+                allStations.append(station)
+                seenNames.insert(station.name)
+            }
+        }
+
+        // Find the closest station
+        return allStations.map { station in
+            (station: station, distance: station.distanceTo(latitude: lat, longitude: lon))
+        }.min { $0.distance < $1.distance }
+    }
 }
 
 actor HTTPClient {
@@ -1214,10 +1265,22 @@ struct TicketmasterService {
 
                 // Parse venue
                 var venueName: String?
+                var venueLat: Double?
+                var venueLon: Double?
                 if let embedded = eventData["_embedded"] as? [String: Any],
                    let venues = embedded["venues"] as? [[String: Any]],
                    let firstVenue = venues.first {
                     venueName = firstVenue["name"] as? String
+
+                    // Parse location
+                    if let location = firstVenue["location"] as? [String: Any] {
+                        if let latStr = location["latitude"] as? String, let lat = Double(latStr) {
+                            venueLat = lat
+                        }
+                        if let lonStr = location["longitude"] as? String, let lon = Double(lonStr) {
+                            venueLon = lon
+                        }
+                    }
                 }
 
                 // Parse URL
@@ -1231,7 +1294,9 @@ struct TicketmasterService {
                     name: name,
                     date: date,
                     venueName: venueName,
-                    url: eventURL
+                    url: eventURL,
+                    venueLatitude: venueLat,
+                    venueLongitude: venueLon
                 )
                 events.append(event)
             }
