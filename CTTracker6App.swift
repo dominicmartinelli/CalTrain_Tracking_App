@@ -857,44 +857,6 @@ struct TrainsScreen: View {
                 if loading { ProgressView("Loading…") }
                 if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
 
-                // Weather banner - always show, with loading state
-                HStack(spacing: 16) {
-                    HStack(spacing: 6) {
-                        if let nbWeather = weatherService.currentWeather[northboundStopCode] {
-                            Text(nbWeather.symbol).font(.title3)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("\(Int(nbWeather.temp))°F").font(.headline)
-                                Text(northboundStop.name).font(.caption).foregroundStyle(.secondary)
-                            }
-                        } else {
-                            ProgressView().controlSize(.small)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Loading...").font(.headline).foregroundStyle(.secondary)
-                                Text(northboundStop.name).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    Spacer()
-                    HStack(spacing: 6) {
-                        if let sbWeather = weatherService.currentWeather[southboundStopCode] {
-                            Text(sbWeather.symbol).font(.title3)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("\(Int(sbWeather.temp))°F").font(.headline)
-                                Text(southboundStop.name).font(.caption).foregroundStyle(.secondary)
-                            }
-                        } else {
-                            ProgressView().controlSize(.small)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Loading...").font(.headline).foregroundStyle(.secondary)
-                                Text(southboundStop.name).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-
                 List {
                     if !sharedAlerts.isEmpty {
                         Section {
