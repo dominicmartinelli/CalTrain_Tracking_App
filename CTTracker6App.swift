@@ -541,8 +541,9 @@ struct InsightsView: View {
                 Section {
                     ForEach(patterns.prefix(3), id: \.fromStopCode) { pattern in
                         VStack(alignment: .leading, spacing: 6) {
-                            let fromName = CaltrainStops.northbound.first { $0.stopCode == pattern.fromStopCode }?.name ?? "Unknown"
-                            let toName = CaltrainStops.northbound.first { $0.stopCode == pattern.toStopCode }?.name ?? "Unknown"
+                            let allStops = CaltrainStops.northbound + CaltrainStops.southbound
+                            let fromName = allStops.first { $0.stopCode == pattern.fromStopCode }?.name ?? "Unknown"
+                            let toName = allStops.first { $0.stopCode == pattern.toStopCode }?.name ?? "Unknown"
 
                             HStack {
                                 Text("\(fromName) → \(toName)")
