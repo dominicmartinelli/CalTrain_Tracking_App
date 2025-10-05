@@ -436,9 +436,45 @@ struct InsightsView: View {
     @State private var stats: (checksThisWeek: Int, mostCommonRoute: String?) = (0, nil)
     @State private var co2Savings: (trips: Int, co2SavedLbs: Double) = (0, 0.0)
     @State private var patterns: [CommutePattern] = []
+    @State private var gameStats: GameStats = GameStats()
 
     var body: some View {
         List {
+            // Streak Section
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            HStack(spacing: 4) {
+                                Text("\(gameStats.currentStreak)")
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundStyle(.orange)
+                                Text("🔥")
+                                    .font(.system(size: 28))
+                            }
+                            Text("Day streak")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing) {
+                            Text("\(gameStats.longestStreak)")
+                                .font(.title)
+                                .foregroundStyle(.secondary)
+                            Text("Best")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            } header: {
+                Text("🔥 Streak")
+            } footer: {
+                Text("Take a trip each day to maintain your streak!")
+                    .font(.caption2)
+            }
+
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -538,6 +574,50 @@ struct InsightsView: View {
                 }
             }
 
+            // Achievements Section
+            Section {
+                let unlockedCount = gameStats.achievements.filter { $0.isUnlocked }.count
+                let totalCount = gameStats.achievements.count
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("\(unlockedCount)/\(totalCount)")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(.purple)
+                        Text("Achievements")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.bottom, 8)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 12) {
+                        ForEach(gameStats.achievements) { achievement in
+                            VStack(spacing: 6) {
+                                Text(achievement.emoji)
+                                    .font(.system(size: 40))
+                                    .opacity(achievement.isUnlocked ? 1.0 : 0.3)
+                                Text(achievement.title)
+                                    .font(.caption2)
+                                    .foregroundStyle(achievement.isUnlocked ? .primary : .tertiary)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(8)
+                            .background(achievement.isUnlocked ? Color.purple.opacity(0.1) : Color.clear)
+                            .cornerRadius(12)
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+            } header: {
+                Text("🏆 Achievements")
+            } footer: {
+                Text("Unlock achievements by taking trips! Tap for details.")
+                    .font(.caption2)
+            }
+
             Section {
                 Button(role: .destructive) {
                     CommuteHistoryStorage.shared.clearHistory()
@@ -561,6 +641,7 @@ struct InsightsView: View {
         stats = CommuteHistoryStorage.shared.getWeeklyStats()
         co2Savings = CommuteHistoryStorage.shared.calculateCO2Savings()
         patterns = CommuteHistoryStorage.shared.analyzePatterns()
+        gameStats = GamificationManager.shared.loadStats()
     }
 }
 
@@ -870,7 +951,7 @@ struct TrainsScreen: View {
                     }
 
                     Section {
-                        ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name) }
+                        ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name, fromStopCode: northboundStopCode, toStopCode: southboundStopCode, direction: "North") }
                     } header: {
                         HStack {
                             Text("Northbound from \(northboundStop.name)")
@@ -886,7 +967,7 @@ struct TrainsScreen: View {
                     }
 
                     Section {
-                        ForEach(south) { DepartureRow(dep: $0, destinationLabel: northboundStop.name) }
+                        ForEach(south) { DepartureRow(dep: $0, destinationLabel: northboundStop.name, fromStopCode: southboundStopCode, toStopCode: northboundStopCode, direction: "South") }
                     } header: {
                         HStack {
                             Text("Southbound from \(southboundStop.name)")
@@ -1061,6 +1142,10 @@ struct ServiceAlertRow: View {
 struct DepartureRow: View {
     let dep: Departure
     let destinationLabel: String
+    let fromStopCode: String
+    let toStopCode: String
+    let direction: String
+    @State private var wasTaken = false
 
     var body: some View {
         HStack {
@@ -1074,12 +1159,60 @@ struct DepartureRow: View {
                 }
             }
             Spacer()
+
+            if wasTaken {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.title3)
+            } else {
+                Button {
+                    recordTrip()
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+            }
+
             VStack(alignment: .trailing) {
                 Text("\(dep.minutes)m").font(.title3).monospacedDigit()
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Departure in \(dep.minutes) minutes to \(destinationLabel)")
+    }
+
+    func recordTrip() {
+        // Create and record a trip entry
+        let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction, wasTripTaken: true)
+        var history = CommuteHistoryStorage.shared.loadHistory()
+        history.append(entry)
+
+        // Keep only recent entries
+        if history.count > 500 {
+            history = Array(history.suffix(500))
+        }
+
+        if let data = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(data, forKey: "commuteHistory")
+        }
+
+        // Record for gamification
+        let (_, newAchievements) = GamificationManager.shared.recordTrip()
+
+        wasTaken = true
+
+        // Haptic feedback
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+
+        // Show achievement notification if any unlocked
+        if !newAchievements.isEmpty {
+            // You could show an alert or toast here
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+        }
     }
 }
 
@@ -1564,6 +1697,142 @@ struct CommutePattern: Codable {
     let commonHours: [Int] // Hours user typically checks this route
     let frequency: Int // Number of times checked
     let lastUsed: Date
+}
+
+// MARK: - Gamification Models
+struct Achievement: Identifiable, Codable {
+    let id: String
+    let title: String
+    let description: String
+    let emoji: String
+    var isUnlocked: Bool
+    var unlockedDate: Date?
+}
+
+struct GameStats: Codable {
+    var currentStreak: Int = 0
+    var longestStreak: Int = 0
+    var lastTripDate: Date?
+    var totalTrips: Int = 0
+    var achievements: [Achievement] = []
+}
+
+class GamificationManager {
+    static let shared = GamificationManager()
+    private let statsKey = "gameStats"
+
+    func loadStats() -> GameStats {
+        guard let data = UserDefaults.standard.data(forKey: statsKey),
+              let stats = try? JSONDecoder().decode(GameStats.self, from: data) else {
+            return createInitialStats()
+        }
+        return stats
+    }
+
+    private func createInitialStats() -> GameStats {
+        var stats = GameStats()
+        stats.achievements = [
+            Achievement(id: "first_trip", title: "First Ride", description: "Take your first Caltrain trip", emoji: "🚂", isUnlocked: false),
+            Achievement(id: "week_warrior", title: "Week Warrior", description: "Ride 5 days in a row", emoji: "🔥", isUnlocked: false),
+            Achievement(id: "month_master", title: "Month Master", description: "Ride 20 days in a month", emoji: "⭐", isUnlocked: false),
+            Achievement(id: "eco_hero", title: "Eco Hero", description: "Save 500 lbs of CO₂", emoji: "🌱", isUnlocked: false),
+            Achievement(id: "commute_king", title: "Commute King", description: "Take 100 trips", emoji: "👑", isUnlocked: false),
+            Achievement(id: "early_bird", title: "Early Bird", description: "Take a train before 7 AM", emoji: "🌅", isUnlocked: false),
+            Achievement(id: "night_owl", title: "Night Owl", description: "Take a train after 9 PM", emoji: "🦉", isUnlocked: false),
+            Achievement(id: "weekend_explorer", title: "Weekend Explorer", description: "Take 10 weekend trips", emoji: "🎒", isUnlocked: false),
+        ]
+        return stats
+    }
+
+    func saveStats(_ stats: GameStats) {
+        if let data = try? JSONEncoder().encode(stats) {
+            UserDefaults.standard.set(data, forKey: statsKey)
+        }
+    }
+
+    func recordTrip(timestamp: Date = Date()) -> (stats: GameStats, newAchievements: [Achievement]) {
+        var stats = loadStats()
+        var newlyUnlocked: [Achievement] = []
+
+        // Update total trips
+        stats.totalTrips += 1
+
+        // Update streak
+        let calendar = Calendar.current
+        if let lastTrip = stats.lastTripDate {
+            let daysSinceLastTrip = calendar.dateComponents([.day], from: lastTrip, to: timestamp).day ?? 0
+
+            if daysSinceLastTrip == 1 {
+                // Consecutive day
+                stats.currentStreak += 1
+            } else if daysSinceLastTrip > 1 {
+                // Streak broken
+                stats.currentStreak = 1
+            }
+            // Same day = no change to streak
+        } else {
+            // First trip ever
+            stats.currentStreak = 1
+        }
+
+        stats.longestStreak = max(stats.longestStreak, stats.currentStreak)
+        stats.lastTripDate = timestamp
+
+        // Check for newly unlocked achievements
+        newlyUnlocked = checkAchievements(&stats, timestamp: timestamp)
+
+        saveStats(stats)
+        return (stats, newlyUnlocked)
+    }
+
+    private func checkAchievements(_ stats: inout GameStats, timestamp: Date) -> [Achievement] {
+        var newlyUnlocked: [Achievement] = []
+
+        for i in 0..<stats.achievements.count {
+            guard !stats.achievements[i].isUnlocked else { continue }
+
+            var shouldUnlock = false
+
+            switch stats.achievements[i].id {
+            case "first_trip":
+                shouldUnlock = stats.totalTrips >= 1
+            case "week_warrior":
+                shouldUnlock = stats.currentStreak >= 5
+            case "month_master":
+                let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
+                let recentTrips = CommuteHistoryStorage.shared.loadHistory().filter {
+                    $0.wasTripTaken && $0.timestamp >= thirtyDaysAgo
+                }
+                shouldUnlock = recentTrips.count >= 20
+            case "eco_hero":
+                let co2 = CommuteHistoryStorage.shared.calculateCO2Savings().co2SavedLbs
+                shouldUnlock = co2 >= 500
+            case "commute_king":
+                shouldUnlock = stats.totalTrips >= 100
+            case "early_bird":
+                let hour = Calendar.current.component(.hour, from: timestamp)
+                shouldUnlock = hour < 7
+            case "night_owl":
+                let hour = Calendar.current.component(.hour, from: timestamp)
+                shouldUnlock = hour >= 21
+            case "weekend_explorer":
+                let weekendTrips = CommuteHistoryStorage.shared.loadHistory().filter {
+                    $0.wasTripTaken && (Calendar.current.component(.weekday, from: $0.timestamp) == 1 || Calendar.current.component(.weekday, from: $0.timestamp) == 7)
+                }
+                shouldUnlock = weekendTrips.count >= 10
+            default:
+                break
+            }
+
+            if shouldUnlock {
+                stats.achievements[i].isUnlocked = true
+                stats.achievements[i].unlockedDate = timestamp
+                newlyUnlocked.append(stats.achievements[i])
+            }
+        }
+
+        return newlyUnlocked
+    }
 }
 
 class CommuteHistoryStorage {
