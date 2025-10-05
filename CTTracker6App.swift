@@ -756,10 +756,54 @@ struct EventsScreen: View {
     @State private var events: [BayAreaEvent] = []
     @State private var loading = false
     @State private var error: String?
+    @State private var selectedStation: String = "All Stations"
+    @State private var maxDistance: Double = 50.0
+
+    private var allStationNames: [String] {
+        var stations = ["All Stations"]
+        stations.append(contentsOf: CaltrainStops.northbound.map { $0.name })
+        return stations
+    }
+
+    private var filteredEvents: [BayAreaEvent] {
+        if selectedStation == "All Stations" {
+            return events
+        }
+
+        return events.filter { event in
+            guard let nearest = event.nearestStation else { return false }
+            return nearest.station.name == selectedStation && nearest.distance <= maxDistance
+        }
+    }
 
     var body: some View {
         NavigationStack {
-            VStack {
+            VStack(spacing: 0) {
+                // Filter controls
+                if !events.isEmpty {
+                    VStack(spacing: 12) {
+                        Picker("Station", selection: $selectedStation) {
+                            ForEach(allStationNames, id: \.self) { station in
+                                Text(station).tag(station)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if selectedStation != "All Stations" {
+                            HStack {
+                                Text("Max Distance:")
+                                    .font(.subheadline)
+                                Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
+                                Text("\(String(format: "%.1f", maxDistance)) mi")
+                                    .font(.subheadline)
+                                    .frame(width: 50)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                }
+
                 if loading { ProgressView("Loading events…").padding() }
                 if let error {
                     Text(error)
@@ -782,13 +826,26 @@ struct EventsScreen: View {
                     .padding()
                 }
 
-                if !events.isEmpty {
+                if !filteredEvents.isEmpty {
                     List {
-                        ForEach(events) { event in
+                        ForEach(filteredEvents) { event in
                             EventRow(event: event)
                         }
                     }
                     .listStyle(.insetGrouped)
+                } else if !events.isEmpty && filteredEvents.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "mappin.slash")
+                            .font(.system(size: 60))
+                            .foregroundStyle(.secondary)
+                        Text("No events near \(selectedStation)")
+                            .foregroundStyle(.secondary)
+                        Text("Try increasing the distance or selecting a different station")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding()
                 }
 
                 Spacer()
