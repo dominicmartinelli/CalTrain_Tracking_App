@@ -18,11 +18,13 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Service alerts displayed when active
 
 ### 🎟️ Bay Area Events
-- Shows events happening today within 50 miles of San Francisco
+- Shows events happening **today only** within 50 miles of San Francisco
 - Powered by Ticketmaster Discovery API
 - Event details include venue, time, and ticket links
 - **Displays nearest Caltrain station** with distance for each event
-- Covers concerts, sports, theater, and more
+- **Filter events by specific Caltrain station** with adjustable distance radius
+- Covers concerts, sports (including Giants games), theater, and more
+- Real-time filtering as you select stations or adjust distance
 
 ### 🚨 Service Alerts
 - Dedicated alerts tab with visual status indicator
