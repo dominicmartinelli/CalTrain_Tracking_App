@@ -86,9 +86,29 @@ All Caltrain stations are supported:
 - **511.org Transit API**: Real-time Caltrain departure data
 - **MLB Stats API**: Giants game schedule information
 
+## Data Attribution & Disclaimer
+
+- Transit data provided by 511.org
+- Baseball data provided by MLB Stats API
+- Transit times are estimates only and provided "as is" without warranty
+- Always verify departure times before traveling
+- Users should exercise reasonable judgment when planning trips
+
+## Compliance
+
+This app complies with 511.org's terms of use:
+- Properly attributes 511.org as the data source
+- Includes required disclaimers about data accuracy
+- Uses authorized API access for transit data
+- Does not redistribute or resell transit data
+
+For 511.org API terms: https://511.org/about/terms
+
 ## License
 
 This project was created for personal use. Feel free to use and modify as needed.
+
+**Note**: If you plan to distribute this app commercially or publicly, you must obtain written authorization from MTC (Metropolitan Transportation Commission) as required by 511.org's terms of use.
 
 ## Credits
 

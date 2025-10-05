@@ -244,6 +244,21 @@ struct SettingsScreen: View {
                     LabeledContent("Version",
                                    value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
                 }
+
+                Section("Data Sources") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Transit data provided by 511.org")
+                            .font(.footnote)
+                        Text("Baseball data provided by MLB Stats API")
+                            .font(.footnote)
+                    }
+                }
+
+                Section("Disclaimer") {
+                    Text("Transit times are estimates only. Data is provided 'as is' without warranty. Always verify departure times and exercise reasonable judgment when planning your trip.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Settings")
             .onAppear {
