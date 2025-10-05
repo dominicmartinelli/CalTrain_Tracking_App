@@ -31,8 +31,9 @@ private let EmbeddedAPIKey_SIMULATOR_ONLY: String? = {
 @inline(__always)
 func isLikelyAPIKey(_ key: String) -> Bool {
     let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty, trimmed.count <= 128 else { return false }
-    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
+    guard !trimmed.isEmpty, trimmed.count <= 256 else { return false }
+    // Allow letters, numbers, hyphens, underscores, and dots (common in API keys)
+    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.")
     return trimmed.unicodeScalars.allSatisfy { allowed.contains($0) }
 }
 
@@ -162,8 +163,10 @@ struct RootView: View {
                 }
                 .badge(alerts.count)
                 .tag(2)
+            StationsScreen()
+                .tabItem { Label("Stations", systemImage: "mappin.and.ellipse") }.tag(3)
             SettingsScreen()
-                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(3)
+                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(4)
         }
         .tint(alerts.isEmpty ? .green : .red)
         .fullScreenCover(isPresented: needsKeyBinding) {
@@ -192,17 +195,10 @@ struct RootView: View {
     }
 }
 
-// MARK: - Settings
-struct SettingsScreen: View {
-    @EnvironmentObject private var app: AppState
+// MARK: - Stations Screen
+struct StationsScreen: View {
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
-    @State private var apiKey511: String = ""
-    @State private var apiKeyTicketmaster: String = ""
-    @State private var status511: String = ""
-    @State private var statusTicketmaster: String = ""
-    @State private var status511Color: Color = .secondary
-    @State private var statusTicketmasterColor: Color = .secondary
 
     private var selectedNorthbound: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -215,38 +211,112 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Train Stations") {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Select your two Caltrain stations:")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text("• Southern Station: Your station closer to San Jose")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Text("• Northern Station: Your station closer to San Francisco")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section("Southern Station (e.g., Mountain View)") {
                     Picker("Southern Station", selection: $northboundStopCode) {
                         ForEach(CaltrainStops.northbound) { stop in
                             Text(stop.name).tag(stop.stopCode)
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(height: 80)
+                    .labelsHidden()
+                }
 
+                Section("Northern Station (e.g., 22nd Street)") {
                     Picker("Northern Station", selection: $southboundStopCode) {
                         ForEach(CaltrainStops.southbound) { stop in
                             Text(stop.name).tag(stop.stopCode)
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(height: 80)
+                    .labelsHidden()
                 }
+
+                Section {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Northbound", systemImage: "arrow.up")
+                                .font(.subheadline)
+                                .foregroundStyle(.blue)
+                            Text("\(selectedNorthbound.name) → \(selectedSouthbound.name)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Southbound", systemImage: "arrow.down")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                            Text("\(selectedSouthbound.name) → \(selectedNorthbound.name)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                } header: {
+                    Text("Your Routes")
+                }
+            }
+            .navigationTitle("Stations")
+        }
+    }
+}
+
+// MARK: - Settings
+struct SettingsScreen: View {
+    @EnvironmentObject private var app: AppState
+    @State private var apiKey511: String = ""
+    @State private var apiKeyTicketmaster: String = ""
+    @State private var status511: String = ""
+    @State private var statusTicketmaster: String = ""
+    @State private var status511Color: Color = .secondary
+    @State private var statusTicketmasterColor: Color = .secondary
+
+    var body: some View {
+        NavigationStack {
+            Form {
 
                 Section("511.org API") {
                     SecureField("API Key", text: $apiKey511)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                     if !status511.isEmpty { Text(status511).foregroundStyle(status511Color) }
-                    HStack {
-                        Button("Save") { save511() }
+
+                    Button(action: save511) {
+                        Text("Save API Key")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    HStack(spacing: 12) {
                         Button("Verify") { verify511() }
+                            .buttonStyle(.bordered)
                         Button("Clear") {
                             app.clearKey()
                             apiKey511 = ""
                             status511 = "Cleared from Keychain."
                             status511Color = .orange
                         }
+                        .buttonStyle(.bordered)
                         .tint(.red)
                     }
+
                     if let stored = Keychain.shared["api_511"], !stored.isEmpty {
                         LabeledContent("Stored", value: Keychain.masked(stored))
                     }
@@ -254,18 +324,30 @@ struct SettingsScreen: View {
 
                 Section("Ticketmaster API") {
                     SecureField("API Key", text: $apiKeyTicketmaster)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                     if !statusTicketmaster.isEmpty { Text(statusTicketmaster).foregroundStyle(statusTicketmasterColor) }
-                    HStack {
-                        Button("Save") { saveTicketmaster() }
+
+                    Button(action: saveTicketmaster) {
+                        Text("Save API Key")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    HStack(spacing: 12) {
                         Button("Verify") { verifyTicketmaster() }
+                            .buttonStyle(.bordered)
                         Button("Clear") {
+                            print("🔴 CLEAR BUTTON TAPPED")
                             Keychain.shared["api_ticketmaster"] = nil
                             apiKeyTicketmaster = ""
                             statusTicketmaster = "Cleared from Keychain."
                             statusTicketmasterColor = .orange
                         }
+                        .buttonStyle(.bordered)
                         .tint(.red)
                     }
+
                     if let stored = Keychain.shared["api_ticketmaster"], !stored.isEmpty {
                         LabeledContent("Stored", value: Keychain.masked(stored))
                     }
@@ -313,19 +395,33 @@ struct SettingsScreen: View {
 
     private func saveTicketmaster() {
         let trimmed = apiKeyTicketmaster.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("🔑 Ticketmaster save - Input length: \(trimmed.count)")
+        print("🔑 Ticketmaster save - isLikelyAPIKey: \(isLikelyAPIKey(trimmed))")
         guard isLikelyAPIKey(trimmed) else {
             statusTicketmaster = "Please enter a valid key."
             statusTicketmasterColor = .red
+            print("🔑 Ticketmaster save - FAILED validation")
             return
         }
+        print("🔑 Ticketmaster save - Saving to keychain...")
         Keychain.shared["api_ticketmaster"] = trimmed
+        apiKeyTicketmaster = trimmed  // Update state variable
+        print("🔑 Ticketmaster save - Verifying...")
         verifyTicketmaster()
     }
 
     private func verifyTicketmaster() {
         let current = Keychain.shared["api_ticketmaster"] ?? ""
-        if !current.isEmpty { statusTicketmaster = "Saved ✓  (\(Keychain.masked(current)))"; statusTicketmasterColor = .green }
-        else { statusTicketmaster = "No key in Keychain."; statusTicketmasterColor = .red }
+        print("🔑 Ticketmaster verify - Read from keychain length: \(current.count)")
+        if !current.isEmpty {
+            statusTicketmaster = "Saved ✓  (\(Keychain.masked(current)))"
+            statusTicketmasterColor = .green
+            print("🔑 Ticketmaster verify - SUCCESS")
+        } else {
+            statusTicketmaster = "No key in Keychain."
+            statusTicketmasterColor = .red
+            print("🔑 Ticketmaster verify - EMPTY")
+        }
     }
 }
 
@@ -1157,9 +1253,14 @@ final class Keychain {
             kSecAttrAccount as String: key,
             kSecValueData as String: data
         ]
+        print("🔐 Keychain saving key=\(key) value_length=\(value.count)")
         SecItemDelete(q as CFDictionary)
         let status = SecItemAdd(q as CFDictionary, nil)
-        if status != errSecSuccess { print("Keychain save failed: \(status)") }
+        if status != errSecSuccess {
+            print("🔐 Keychain save FAILED: \(status)")
+        } else {
+            print("🔐 Keychain save SUCCESS")
+        }
     }
     private func read(_ key: String) -> String? {
         let q: [String:Any] = [
