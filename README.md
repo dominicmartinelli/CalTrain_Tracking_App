@@ -4,6 +4,11 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 
 ## Features
 
+### 🎨 Branding
+- Vintage-style Caltrain Checker logo with full-screen splash screen on launch
+- Logo icon displayed in navigation bar across all screens
+- Cohesive retro aesthetic throughout the app
+
 ### 🚂 Train Tracking
 - Real-time Caltrain departure times from the 511.org SIRI API
 - Track trains between any two Caltrain stations
@@ -16,6 +21,7 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Shows events happening today within 50 miles of San Francisco
 - Powered by Ticketmaster Discovery API
 - Event details include venue, time, and ticket links
+- **Displays nearest Caltrain station** with distance for each event
 - Covers concerts, sports, theater, and more
 
 ### 🚨 Service Alerts
@@ -108,16 +114,18 @@ All Caltrain stations are supported:
 - Secure keychain storage for API credentials
 - Async/await networking with URLSession
 - Robust SIRI XML/JSON response parsing
+- Haversine formula for calculating distances between venues and stations
+- Custom splash screen with fade-out animation
 
 ## APIs Used
 
-- **511.org Transit API**: Real-time Caltrain departure data
-- **MLB Stats API**: Giants game schedule information
+- **511.org Transit API**: Real-time Caltrain departure data and service alerts
+- **Ticketmaster Discovery API**: Bay Area events information
 
 ## Data Attribution & Disclaimer
 
 - Transit data provided by 511.org
-- Baseball data provided by MLB Stats API
+- Events data provided by Ticketmaster Discovery API
 - Transit times are estimates only and provided "as is" without warranty
 - Always verify departure times before traveling
 - Users should exercise reasonable judgment when planning trips
