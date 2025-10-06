@@ -27,14 +27,14 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Automatic GTFS feed updates (24-hour cache)
 
 ### 🎟️ Bay Area Events
-- Shows events happening **today only** within 50 miles of San Francisco
+- **Date picker** - browse events for today or any future date
+- **Smart filtering** - show all venues or only large venues (20,000+ capacity)
+- **Station-based search** - filter by "All Stations" or specific Caltrain station
+- **Adjustable distance radius** - 0.5 to 10 miles from selected station(s)
 - Powered by Ticketmaster Discovery API
-- **Filters to show only large events** (20,000+ capacity venues)
-- Event details include venue, time, and ticket links
-- **Displays nearest Caltrain station** with distance for each event
-- **Filter events by specific Caltrain station** with adjustable distance radius
+- Event details include venue, time, ticket links, and nearest Caltrain station
 - Covers concerts, sports (including Giants games), theater, and more
-- Real-time filtering as you select stations or adjust distance
+- Perfect for planning weekend trips or finding events near your commute
 
 ### 🚨 Service Alerts
 - Dedicated alerts tab with visual status indicator
@@ -111,7 +111,7 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 4. (Optional) Go to **Settings** tab to add Ticketmaster API key for events
 5. The app has 6 tabs:
    - **Trains**: Northbound and Southbound departures with weather
-   - **Events**: Today's Bay Area events near Caltrain stations
+   - **Events**: Browse Bay Area events by date near Caltrain stations
    - **Alerts**: Service disruptions with visual status
    - **Insights**: Streak tracking, achievements, CO₂ savings, and patterns
    - **Stations**: Configure and save multiple commute routes
@@ -184,10 +184,17 @@ All Caltrain stations are supported:
   - Automatic cleanup: keeps only most recent 1000 records
   - Privacy-first: all data stored locally on device, never uploaded
   - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
+- **Security Features**
+  - Thread-safe Keychain access with concurrent DispatchQueue
+  - API rate limiting (10 seconds between requests to same endpoint)
+  - Network retry logic with exponential backoff (1s, 2s, 4s)
+  - Sanitized error messages (no server response leaks)
+  - ZIP path traversal and ZIP bomb protection
+  - Input validation for API keys and file paths
 - Robust SIRI XML/JSON response parsing
 - Haversine formula for calculating distances between venues and stations
 - Custom splash screen with fade-out animation
-- Event capacity filtering (20,000+ venues only)
+- Event capacity filtering (optional 20,000+ venues filter)
 
 ## APIs & Data Sources
 
