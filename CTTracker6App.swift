@@ -11,7 +11,6 @@ import Foundation
 import Security
 import Compression
 import UserNotifications
-import CoreLocation
 
 // MARK: - Debug Configuration
 #if DEBUG
@@ -35,6 +34,8 @@ final class AppState: ObservableObject {
 }
 
 // MARK: - Optional embedded key (simulator only)
+// Set to a valid API key for simulator auto-seeding during development.
+// Intentionally nil by default to avoid committing keys to version control.
 private let EmbeddedAPIKey_SIMULATOR_ONLY: String? = {
 #if targetEnvironment(simulator)
     return nil // e.g. "2d8f9a3e-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
