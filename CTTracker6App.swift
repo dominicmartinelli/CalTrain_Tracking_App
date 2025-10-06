@@ -13,6 +13,19 @@ import Compression
 import UserNotifications
 import CoreLocation
 
+// MARK: - Debug Configuration
+#if DEBUG
+private let isDebugMode = true
+#else
+private let isDebugMode = false
+#endif
+
+private func debugLog(_ message: String) {
+    if isDebugMode {
+        print(message)
+    }
+}
+
 // MARK: - Global App State
 final class AppState: ObservableObject {
     @Published var hasKey: Bool = (Keychain.shared["api_511"]?.isEmpty == false)
@@ -815,32 +828,32 @@ struct SettingsScreen: View {
 
     private func saveTicketmaster() {
         let trimmed = apiKeyTicketmaster.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("🔑 Ticketmaster save - Input length: \(trimmed.count)")
-        print("🔑 Ticketmaster save - isLikelyAPIKey: \(isLikelyAPIKey(trimmed))")
+        debugLog("🔑 Ticketmaster save - Input length: \(trimmed.count)")
+        debugLog("🔑 Ticketmaster save - isLikelyAPIKey: \(isLikelyAPIKey(trimmed))")
         guard isLikelyAPIKey(trimmed) else {
             statusTicketmaster = "Please enter a valid key."
             statusTicketmasterColor = .red
-            print("🔑 Ticketmaster save - FAILED validation")
+            debugLog("🔑 Ticketmaster save - FAILED validation")
             return
         }
-        print("🔑 Ticketmaster save - Saving to keychain...")
+        debugLog("🔑 Ticketmaster save - Saving to keychain...")
         Keychain.shared["api_ticketmaster"] = trimmed
         apiKeyTicketmaster = trimmed  // Update state variable
-        print("🔑 Ticketmaster save - Verifying...")
+        debugLog("🔑 Ticketmaster save - Verifying...")
         verifyTicketmaster()
     }
 
     private func verifyTicketmaster() {
         let current = Keychain.shared["api_ticketmaster"] ?? ""
-        print("🔑 Ticketmaster verify - Read from keychain length: \(current.count)")
+        debugLog("🔑 Ticketmaster verify - Read from keychain length: \(current.count)")
         if !current.isEmpty {
             statusTicketmaster = "Saved ✓  (\(Keychain.masked(current)))"
             statusTicketmasterColor = .green
-            print("🔑 Ticketmaster verify - SUCCESS")
+            debugLog("🔑 Ticketmaster verify - SUCCESS")
         } else {
             statusTicketmaster = "No key in Keychain."
             statusTicketmasterColor = .red
-            print("🔑 Ticketmaster verify - EMPTY")
+            debugLog("🔑 Ticketmaster verify - EMPTY")
         }
     }
 }
@@ -933,8 +946,10 @@ struct AboutScreen: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
-                    Link("View 511.org Terms", destination: URL(string: "https://511.org/about/terms")!)
-                        .font(.footnote)
+                    if let termsURL = URL(string: "https://511.org/about/terms") {
+                        Link("View 511.org Terms", destination: termsURL)
+                            .font(.footnote)
+                    }
                 }
             }
 
@@ -1095,8 +1110,8 @@ struct TrainsScreen: View {
             error = "Add your 511 API key in Settings."
             return
         }
-        print("🔍 Loading trains - Northbound code: \(northboundStopCode), Southbound code: \(southboundStopCode)")
-        print("🔍 Northbound station: \(northboundStop.name), Southbound station: \(southboundStop.name)")
+        debugLog("🔍 Loading trains - Northbound code: \(northboundStopCode), Southbound code: \(southboundStopCode)")
+        debugLog("🔍 Northbound station: \(northboundStop.name), Southbound station: \(southboundStop.name)")
         do {
             // Load GTFS scheduled departures
             async let nbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: northboundStopCode, direction: 0, refDate: refDate, count: 3)
@@ -1679,8 +1694,8 @@ struct CaltrainStops {
     ]
 
     // Default stops (Mountain View northbound and 22nd Street southbound)
-    static let defaultNorthbound = northbound.first { $0.name == "Mountain View" }!
-    static let defaultSouthbound = southbound.first { $0.name == "22nd Street" }!
+    static let defaultNorthbound = northbound.first { $0.name == "Mountain View" } ?? northbound[0]
+    static let defaultSouthbound = southbound.first { $0.name == "22nd Street" } ?? southbound[southbound.count - 1]
 }
 
 struct Departure: Identifiable, Hashable {
@@ -2066,7 +2081,10 @@ class GamificationManager {
             case "week_warrior":
                 shouldUnlock = stats.currentStreak >= 5
             case "month_master":
-                let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
+                guard let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date()) else {
+                    shouldUnlock = false
+                    break
+                }
                 let recentTrips = CommuteHistoryStorage.shared.loadHistory().filter {
                     $0.wasTripTaken && $0.timestamp >= thirtyDaysAgo
                 }
@@ -2180,7 +2198,9 @@ class CommuteHistoryStorage {
         let history = loadHistory()
 
         // Filter to last 30 days AND only trips user confirmed they took
-        let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date())!
+        guard let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date()) else {
+            return (0, 0.0)
+        }
         let confirmedTrips = history.filter { $0.timestamp >= thirtyDaysAgo && $0.wasTripTaken }
 
         // Average Caltrain trip ~25 miles, car emits ~0.89 lbs CO2/mile
@@ -2203,7 +2223,9 @@ class CommuteHistoryStorage {
     // Get weekly stats
     func getWeeklyStats() -> (checksThisWeek: Int, mostCommonRoute: String?) {
         let history = loadHistory()
-        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        guard let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) else {
+            return (0, nil)
+        }
         let weekHistory = history.filter { $0.timestamp >= weekAgo }
 
         let routeCounts = Dictionary(grouping: weekHistory, by: { "\($0.fromStopCode)-\($0.toStopCode)" })
@@ -2262,8 +2284,12 @@ class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCe
         content.sound = .default
 
         // Trigger 15 minutes before departure
-        let triggerDate = Calendar.current.date(byAdding: .minute, value: -(15), to: trainTime)!
-        let components = Calendar.current.dateComponents([.hour, .minute], from: triggerDate)
+        guard let triggerDate = Calendar.current.date(byAdding: .minute, value: -15, to: trainTime) else {
+            print("⚠️ Failed to calculate trigger date for notification")
+            return
+        }
+        // Use full date components to ensure it triggers today, not tomorrow
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
 
         let request = UNNotificationRequest(identifier: "usualTrain-\(UUID().uuidString)", content: content, trigger: trigger)
@@ -2304,19 +2330,16 @@ class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCe
     }
 }
 
-// MARK: - Weather Service (OpenWeatherMap)
+// MARK: - Weather Service (Open-Meteo)
 @MainActor
 class WeatherService: ObservableObject {
     static let shared = WeatherService()
     @Published var currentWeather: [String: (temp: Double, condition: String, symbol: String)] = [:]
 
-    // OpenWeatherMap API - free tier, no signup required for basic usage
-    // Using a demo key - users can add their own in Settings for unlimited requests
-    private let apiKey = "demo" // Will use free tier endpoint
+    // Open-Meteo API - completely free, no API key required, very reliable
+    // API: https://open-meteo.com/en/docs
 
     func fetchWeather(for station: CaltrainStop) async {
-        // Use Open-Meteo - completely free, no API key, very reliable
-        // API: https://open-meteo.com/en/docs
         let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(station.latitude)&longitude=\(station.longitude)&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America/Los_Angeles"
 
         guard let url = URL(string: urlString) else {
@@ -2336,12 +2359,12 @@ class WeatherService: ObservableObject {
                 let condition = getWeatherDescription(weatherCode)
 
                 currentWeather[station.stopCode] = (temp: temp, condition: condition, symbol: emoji)
-                print("✅ Weather fetched for \(station.name): \(Int(temp))°F, \(condition)")
+                debugLog("✅ Weather fetched for \(station.name): \(Int(temp))°F, \(condition)")
             } else {
-                print("❌ Failed to parse weather JSON for \(station.name)")
+                debugLog("❌ Failed to parse weather JSON for \(station.name)")
             }
         } catch {
-            print("❌ Weather fetch failed for \(station.name): \(error.localizedDescription)")
+            debugLog("❌ Weather fetch failed for \(station.name): \(error.localizedDescription)")
         }
     }
 
@@ -2536,10 +2559,13 @@ actor GTFSService {
         defer { destinationBuffer.deallocate() }
 
         let decompressedSize = sourceBuffer.withUnsafeBufferPointer { srcPtr in
-            compression_decode_buffer(
+            guard let baseAddress = srcPtr.baseAddress else {
+                return 0
+            }
+            return compression_decode_buffer(
                 destinationBuffer,
                 uncompressedSize,
-                srcPtr.baseAddress!,
+                baseAddress,
                 sourceBuffer.count,
                 nil,
                 COMPRESSION_ZLIB
@@ -2554,7 +2580,7 @@ actor GTFSService {
     }
 
     private func downloadAndParseGTFS() async throws {
-        print("📥 Downloading GTFS feed...")
+        debugLog("📥 Downloading GTFS feed...")
 
         guard let url = URL(string: gtfsURL) else {
             throw URLError(.badURL)
@@ -2567,7 +2593,7 @@ actor GTFSService {
             throw URLError(.badServerResponse)
         }
 
-        print("📦 GTFS downloaded (\(data.count) bytes), extracting...")
+        debugLog("📦 GTFS downloaded (\(data.count) bytes), extracting...")
 
         // Create temp directory for extraction
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -2595,7 +2621,7 @@ actor GTFSService {
 
         lastFetchDate = Date()
 
-        print("✅ GTFS loaded: \(stops.count) stops, \(trips.count) trips, \(stopTimes.count) stop times")
+        debugLog("✅ GTFS loaded: \(stops.count) stops, \(trips.count) trips, \(stopTimes.count) stop times")
     }
 
     private func parseStops(at url: URL) throws -> [GTFSStop] {
@@ -2765,7 +2791,7 @@ actor GTFSService {
 
         // Get current date components in Pacific Time
         var pacificCalendar = Calendar.current
-        pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
 
         let today = pacificCalendar.startOfDay(for: refDate)
         let dateFormatter = DateFormatter()
@@ -2808,7 +2834,10 @@ actor GTFSService {
             // Handle times >= 24:00:00 (next day)
             if hours >= 24 {
                 totalMinutes = (hours - 24) * 60 + minutes
-                departureDate = pacificCalendar.date(byAdding: .day, value: 1, to: today)!
+                guard let nextDay = pacificCalendar.date(byAdding: .day, value: 1, to: today) else {
+                    continue
+                }
+                departureDate = nextDay
             }
 
             // Only include departures after reference time (same day)
@@ -3192,7 +3221,9 @@ struct TicketmasterService {
         let today = Date.now
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: today)
-        let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
+        guard let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday) else {
+            throw NSError(domain: "CaltrainChecker", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to calculate end of day"])
+        }
 
         // Format with local timezone to avoid UTC offset issues
         let dateFormatter = ISO8601DateFormatter()
@@ -3217,21 +3248,24 @@ struct TicketmasterService {
         guard let url = comps.url else {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
         }
-        print("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
-        print("🎟️ URL: \(url)")
+        debugLog("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
+        debugLog("🎟️ URL: \(url)")
         let (data, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            print("🎟️ Ticketmaster HTTP error: \(http.statusCode)")
+            debugLog("🎟️ Ticketmaster HTTP error: \(http.statusCode)")
             throw NSError(domain: "Ticketmaster", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
         }
 
         do {
-            let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                debugLog("🎟️ Failed to parse JSON as dictionary")
+                return []
+            }
             guard let embedded = json["_embedded"] as? [String: Any],
                   let eventsArray = embedded["events"] as? [[String: Any]] else {
-                print("🎟️ No events found in response")
+                debugLog("🎟️ No events found in response")
                 return []
             }
 
@@ -3298,10 +3332,10 @@ struct TicketmasterService {
                 events.append(event)
             }
 
-            print("🎟️ Found \(events.count) events")
+            debugLog("🎟️ Found \(events.count) events")
             return events
         } catch {
-            print("🎟️ Failed to decode: \(error)")
+            debugLog("🎟️ Failed to decode: \(error)")
             throw NSError(domain: "Ticketmaster.decode", code: 0,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to parse events: \(error.localizedDescription)"])
         }
