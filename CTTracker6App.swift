@@ -177,6 +177,7 @@ struct APIKeySetupScreen: View {
 // MARK: - Root Tabs
 struct RootView: View {
     @EnvironmentObject private var app: AppState
+    @StateObject private var themeManager = ThemeManager.shared
     @State private var tab = 0
     @State private var alerts: [ServiceAlert] = []
     @State private var alertsLoading = false
@@ -210,7 +211,7 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(5)
         }
-        .accentColor(alerts.isEmpty ? .green : .red)
+        .accentColor(themeManager.currentTheme.primaryColor)
         .fullScreenCover(isPresented: needsKeyBinding) {
             APIKeySetupScreen().environmentObject(app)
         }
@@ -753,6 +754,21 @@ struct SettingsScreen: View {
 
                 Section {
                     NavigationLink {
+                        ThemeSelectionView()
+                    } label: {
+                        HStack {
+                            Label("Theme", systemImage: "paintbrush.fill")
+                            Spacer()
+                            Text(ThemeManager.shared.currentTheme.icon + " " + ThemeManager.shared.currentTheme.rawValue)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Appearance")
+                }
+
+                Section {
+                    NavigationLink {
                         AboutScreen()
                     } label: {
                         HStack {
@@ -826,6 +842,48 @@ struct SettingsScreen: View {
             statusTicketmasterColor = .red
             print("🔑 Ticketmaster verify - EMPTY")
         }
+    }
+}
+
+// MARK: - Theme Selection Screen
+struct ThemeSelectionView: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    var body: some View {
+        List {
+            ForEach(AppTheme.allCases) { theme in
+                Button {
+                    withAnimation {
+                        themeManager.setTheme(theme)
+                    }
+                } label: {
+                    HStack {
+                        Text(theme.icon)
+                            .font(.title2)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(theme.rawValue)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(theme.primaryColor)
+                                    .frame(width: 20, height: 20)
+                                Circle()
+                                    .fill(theme.accentColor)
+                                    .frame(width: 20, height: 20)
+                            }
+                        }
+                        Spacer()
+                        if themeManager.currentTheme == theme {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(theme.primaryColor)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .navigationTitle("Choose Theme")
     }
 }
 
@@ -1092,6 +1150,27 @@ struct TrainsScreen: View {
                 let diff = abs(scheduledTime.timeIntervalSince(realtimeTime))
                 return diff < 120 // 2 minutes tolerance
             }) {
+                // Calculate delay (in minutes)
+                if let realtimeTime = matchingRealtime.depTime,
+                   let trainNum = matchingRealtime.trainNumber ?? scheduledDep.trainNumber,
+                   !trainNum.isEmpty {
+                    let delaySeconds = realtimeTime.timeIntervalSince(scheduledTime)
+                    let delayMinutes = Int(delaySeconds / 60)
+
+                    // Only record significant delays (≥1 minute difference)
+                    if abs(delayMinutes) >= 1 {
+                        // Record delay for prediction engine
+                        // Use northbound or southbound stop code based on direction
+                        let stopCode = scheduledDep.direction == "N" ? northboundStopCode : southboundStopCode
+                        DelayPredictor.shared.recordDelay(
+                            trainNumber: trainNum,
+                            stopCode: stopCode,
+                            scheduledTime: scheduledTime,
+                            actualDelay: delayMinutes
+                        )
+                    }
+                }
+
                 // Update with real-time service type if available
                 if let serviceType = matchingRealtime.trainNumber, !serviceType.isEmpty {
                     result[index] = Departure(
@@ -1151,6 +1230,11 @@ struct DepartureRow: View {
     let direction: String
     @State private var wasTaken = false
 
+    var delayPrediction: (averageDelay: Int, confidence: String)? {
+        guard let trainNumber = dep.trainNumber, let depTime = dep.depTime else { return nil }
+        return DelayPredictor.shared.predictDelay(trainNumber: trainNumber, stopCode: fromStopCode, scheduledTime: depTime)
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -1159,6 +1243,27 @@ struct DepartureRow: View {
                     Text(destinationLabel).font(.subheadline).foregroundStyle(.secondary)
                     if let serviceType = dep.trainNumber, !serviceType.isEmpty {
                         Text("(\(serviceType))").font(.caption).foregroundStyle(.tertiary)
+                    }
+                }
+
+                // Delay prediction
+                if let prediction = delayPrediction, abs(prediction.averageDelay) >= 3 {
+                    HStack(spacing: 3) {
+                        if prediction.averageDelay > 0 {
+                            Image(systemName: "clock.badge.exclamationmark")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                            Text("Usually \(prediction.averageDelay) min late")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        } else {
+                            Image(systemName: "clock.badge.checkmark")
+                                .font(.caption2)
+                                .foregroundStyle(.green)
+                            Text("Usually \(abs(prediction.averageDelay)) min early")
+                                .font(.caption2)
+                                .foregroundStyle(.green)
+                        }
                     }
                 }
             }
@@ -1702,6 +1807,163 @@ struct CommutePattern: Codable, Identifiable {
     let commonHours: [Int] // Hours user typically checks this route
     let frequency: Int // Number of times checked
     let lastUsed: Date
+}
+
+// MARK: - Delay Prediction
+struct DelayRecord: Codable {
+    let trainNumber: String
+    let stopCode: String
+    let scheduledTime: Date
+    let actualDelay: Int // minutes late (negative = early)
+    let dayOfWeek: Int
+    let hourOfDay: Int
+    let timestamp: Date
+}
+
+class DelayPredictor {
+    static let shared = DelayPredictor()
+    private let delayKey = "delayHistory"
+    private let maxRecords = 1000
+
+    func recordDelay(trainNumber: String, stopCode: String, scheduledTime: Date, actualDelay: Int) {
+        var records = loadRecords()
+
+        let calendar = Calendar.current
+        let record = DelayRecord(
+            trainNumber: trainNumber,
+            stopCode: stopCode,
+            scheduledTime: scheduledTime,
+            actualDelay: actualDelay,
+            dayOfWeek: calendar.component(.weekday, from: scheduledTime),
+            hourOfDay: calendar.component(.hour, from: scheduledTime),
+            timestamp: Date()
+        )
+
+        records.append(record)
+
+        // Keep only recent records
+        if records.count > maxRecords {
+            records = Array(records.suffix(maxRecords))
+        }
+
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: delayKey)
+        }
+    }
+
+    func predictDelay(trainNumber: String, stopCode: String, scheduledTime: Date) -> (averageDelay: Int, confidence: String)? {
+        let records = loadRecords()
+
+        let calendar = Calendar.current
+        let dayOfWeek = calendar.component(.weekday, from: scheduledTime)
+        let hourOfDay = calendar.component(.hour, from: scheduledTime)
+
+        // Filter to similar trains (same train number, day of week, and hour)
+        let similarRecords = records.filter {
+            $0.trainNumber == trainNumber &&
+            $0.stopCode == stopCode &&
+            $0.dayOfWeek == dayOfWeek &&
+            abs($0.hourOfDay - hourOfDay) <= 1 // Within 1 hour
+        }
+
+        guard !similarRecords.isEmpty else { return nil }
+
+        // Calculate average delay
+        let totalDelay = similarRecords.reduce(0) { $0 + $1.actualDelay }
+        let averageDelay = totalDelay / similarRecords.count
+
+        // Determine confidence based on sample size
+        let confidence: String
+        if similarRecords.count >= 10 {
+            confidence = "High"
+        } else if similarRecords.count >= 5 {
+            confidence = "Medium"
+        } else {
+            confidence = "Low"
+        }
+
+        return (averageDelay: averageDelay, confidence: confidence)
+    }
+
+    private func loadRecords() -> [DelayRecord] {
+        guard let data = UserDefaults.standard.data(forKey: delayKey),
+              let records = try? JSONDecoder().decode([DelayRecord].self, from: data) else {
+            return []
+        }
+        return records
+    }
+}
+
+// MARK: - Theme System
+enum AppTheme: String, Codable, CaseIterable, Identifiable {
+    case vintage = "Vintage"
+    case modern = "Modern"
+    case dark = "Dark"
+    case ocean = "Ocean"
+    case sunset = "Sunset"
+
+    var id: String { rawValue }
+
+    var primaryColor: Color {
+        switch self {
+        case .vintage: return Color(red: 0.75, green: 0.42, blue: 0.38) // Muted red-brown
+        case .modern: return Color(red: 0.0, green: 0.48, blue: 1.0) // Bright blue
+        case .dark: return Color(red: 0.8, green: 0.8, blue: 0.8) // Light gray
+        case .ocean: return Color(red: 0.2, green: 0.6, blue: 0.86) // Ocean blue
+        case .sunset: return Color(red: 1.0, green: 0.49, blue: 0.31) // Coral orange
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .vintage: return Color(red: 0.95, green: 0.87, blue: 0.73) // Cream
+        case .modern: return Color(red: 0.2, green: 0.78, blue: 0.35) // Green
+        case .dark: return Color(red: 0.5, green: 0.5, blue: 1.0) // Purple
+        case .ocean: return Color(red: 0.0, green: 0.8, blue: 0.8) // Teal
+        case .sunset: return Color(red: 1.0, green: 0.76, blue: 0.03) // Golden yellow
+        }
+    }
+
+    var backgroundColor: Color {
+        switch self {
+        case .vintage: return Color(red: 0.98, green: 0.95, blue: 0.91) // Light cream
+        case .modern: return Color.white
+        case .dark: return Color(red: 0.11, green: 0.11, blue: 0.12) // Near black
+        case .ocean: return Color(red: 0.94, green: 0.97, blue: 0.98) // Very light blue
+        case .sunset: return Color(red: 0.99, green: 0.95, blue: 0.93) // Warm white
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .vintage: return "🎨"
+        case .modern: return "✨"
+        case .dark: return "🌙"
+        case .ocean: return "🌊"
+        case .sunset: return "🌅"
+        }
+    }
+}
+
+class ThemeManager: ObservableObject {
+    static let shared = ThemeManager()
+    @Published var currentTheme: AppTheme = .vintage
+
+    init() {
+        loadTheme()
+    }
+
+    func loadTheme() {
+        if let themeString = UserDefaults.standard.string(forKey: "appTheme"),
+           let theme = AppTheme(rawValue: themeString) {
+            currentTheme = theme
+        }
+    }
+
+    func setTheme(_ theme: AppTheme) {
+        currentTheme = theme
+        UserDefaults.standard.set(theme.rawValue, forKey: "appTheme")
+    }
 }
 
 // MARK: - Gamification Models
