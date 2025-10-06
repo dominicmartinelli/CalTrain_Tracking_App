@@ -1415,7 +1415,7 @@ struct EventsScreen: View {
     @State private var loading = false
     @State private var error: String?
     @State private var selectedStation: String = "All Stations"
-    @State private var maxDistance: Double = 50.0 // Distance from SF for "All Stations", or from selected station
+    @State private var maxDistance: Double = 5.0 // Distance from any/selected Caltrain station
 
     private var allStationNames: [String] {
         var stations = ["All Stations"]
@@ -1432,11 +1432,10 @@ struct EventsScreen: View {
 
         // Then filter by station/distance
         if selectedStation == "All Stations" {
-            // Filter by distance from San Francisco (37.7749, -122.4194)
+            // Show events within maxDistance of ANY Caltrain station
             return largeEvents.filter { event in
-                guard let lat = event.venueLatitude, let lon = event.venueLongitude else { return false }
-                let distance = haversine(lat1: 37.7749, lon1: -122.4194, lat2: lat, lon2: lon)
-                return distance <= maxDistance
+                guard let nearest = event.nearestStation else { return false }
+                return nearest.distance <= maxDistance
             }
         }
 
@@ -1499,13 +1498,13 @@ struct EventsScreen: View {
 
                             VStack(spacing: 4) {
                                 HStack {
-                                    Text(selectedStation == "All Stations" ? "Max Distance from SF" : "Max Distance")
+                                    Text(selectedStation == "All Stations" ? "Max Distance from Any Station" : "Max Distance")
                                     Spacer()
                                     Text("\(String(format: "%.1f", maxDistance)) mi")
                                         .foregroundStyle(.secondary)
                                 }
                                 if selectedStation == "All Stations" {
-                                    Slider(value: $maxDistance, in: 5...100, step: 5)
+                                    Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
                                 } else {
                                     Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
                                 }
