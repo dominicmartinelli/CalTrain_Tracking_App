@@ -1,0 +1,20 @@
+# Local development notes
+CLAUDE.md
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+DerivedData/
+*.xcworkspace
+!default.xcworkspace
+
+# Swift Package Manager
+.build/
+Packages/
+
+# User-specific files
+*.xcuserdata
