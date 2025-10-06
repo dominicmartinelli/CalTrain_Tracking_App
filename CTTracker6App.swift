@@ -20,7 +20,7 @@ private let isDebugMode = true
 private let isDebugMode = false
 #endif
 
-private func debugLog(_ message: String) {
+private nonisolated func debugLog(_ message: String) {
     if isDebugMode {
         print(message)
     }
@@ -1007,6 +1007,14 @@ struct TrainsScreen: View {
                     DatePicker("", selection: $refDate, displayedComponents: [.hourAndMinute])
                         .labelsHidden()
                         .fixedSize()
+                        .onChange(of: refDate) { _, newDate in
+                            // If selected time is in the past, assume user means tomorrow
+                            if newDate < Date() {
+                                if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: newDate) {
+                                    refDate = tomorrow
+                                }
+                            }
+                        }
 
                     Button("Now") { refDate = Date() }
                         .buttonStyle(.bordered)
