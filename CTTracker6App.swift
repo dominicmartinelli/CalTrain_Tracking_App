@@ -1417,6 +1417,7 @@ struct EventsScreen: View {
     @State private var selectedStation: String = "All Stations"
     @State private var maxDistance: Double = 5.0 // Distance from any/selected Caltrain station
     @State private var showAllCapacities: Bool = false // Toggle to show events of any capacity
+    @State private var selectedDate: Date = Date() // Date to search for events
 
     private var allStationNames: [String] {
         var stations = ["All Stations"]
@@ -1501,6 +1502,17 @@ struct EventsScreen: View {
                     VStack(spacing: 0) {
                         // Filter controls - always visible
                         VStack(spacing: 12) {
+                            // Date picker
+                            DatePicker("Date:", selection: $selectedDate, displayedComponents: .date)
+                                .datePickerStyle(.compact)
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                .background(Color(.secondarySystemBackground))
+                                .cornerRadius(8)
+                                .onChange(of: selectedDate) { _, _ in
+                                    Task { await load() }
+                                }
+
                             Menu {
                                 Picker("Station", selection: $selectedStation) {
                                     ForEach(allStationNames, id: \.self) { station in
@@ -1572,10 +1584,14 @@ struct EventsScreen: View {
                                         EventRow(event: event)
                                     }
                                 } header: {
+                                    let dateString = Calendar.current.isDateInToday(selectedDate)
+                                        ? "Today"
+                                        : DateFormatter.localizedString(from: selectedDate, dateStyle: .medium, timeStyle: .none)
+
                                     if selectedStation == "All Stations" {
-                                        Text("All Events Today")
+                                        Text("All Events - \(dateString)")
                                     } else {
-                                        Text("Events near \(selectedStation)")
+                                        Text("Events near \(selectedStation) - \(dateString)")
                                     }
                                 }
                             }
@@ -1615,7 +1631,7 @@ struct EventsScreen: View {
         }
 
         do {
-            events = try await TicketmasterService.searchEvents(apiKey: key)
+            events = try await TicketmasterService.searchEvents(apiKey: key, date: selectedDate)
         } catch {
             self.error = (error as NSError).localizedDescription
         }
@@ -3387,20 +3403,19 @@ struct SIRIService {
 
 // MARK: - Ticketmaster API
 struct TicketmasterService {
-    static func searchEvents(apiKey: String, city: String = "San Francisco", radius: String = "50") async throws -> [BayAreaEvent] {
-        // Get today's date in ISO format (YYYY-MM-DD)
-        let today = Date.now
+    static func searchEvents(apiKey: String, city: String = "San Francisco", radius: String = "50", date: Date = Date()) async throws -> [BayAreaEvent] {
+        // Get the selected date's start and end
         let calendar = Calendar.current
-        let startOfToday = calendar.startOfDay(for: today)
-        guard let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday) else {
+        let startOfDay = calendar.startOfDay(for: date)
+        guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else {
             throw NSError(domain: "CaltrainChecker", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to calculate end of day"])
         }
 
         // Format with local timezone to avoid UTC offset issues
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withTimeZone]
-        let startDateTime = dateFormatter.string(from: startOfToday)
-        let endDateTime = dateFormatter.string(from: endOfToday)
+        let startDateTime = dateFormatter.string(from: startOfDay)
+        let endDateTime = dateFormatter.string(from: endOfDay)
 
         guard var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json") else {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
@@ -3419,7 +3434,8 @@ struct TicketmasterService {
         guard let url = comps.url else {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
         }
-        debugLog("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
+        let dateString = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
+        debugLog("🎟️ Fetching Ticketmaster events for \(dateString) (\(startDateTime) to \(endDateTime))")
         debugLog("🎟️ URL: \(url.host ?? "unknown")\(url.path)")
         let (data, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
