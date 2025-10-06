@@ -3184,10 +3184,11 @@ struct TicketmasterService {
         let startOfToday = calendar.startOfDay(for: today)
         let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
 
+        // Format with local timezone to avoid UTC offset issues
         let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withFullDate]
-        let startDateTime = dateFormatter.string(from: startOfToday) + "T00:00:00Z"
-        let endDateTime = dateFormatter.string(from: endOfToday) + "T00:00:00Z"
+        dateFormatter.formatOptions = [.withInternetDateTime, .withTimeZone]
+        let startDateTime = dateFormatter.string(from: startOfToday)
+        let endDateTime = dateFormatter.string(from: endOfToday)
 
         var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json")!
         comps.queryItems = [
