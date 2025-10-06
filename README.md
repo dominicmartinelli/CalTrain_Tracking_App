@@ -12,6 +12,11 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 ### 🚂 Train Tracking
 - **Complete Caltrain schedule** using GTFS static data - shows all scheduled trains
 - **Real-time enhancements** from 511.org SIRI API (service types, delays)
+- **Delay predictions** - machine learning-based predictions showing if trains are usually late/early
+  - Predicts delays based on historical patterns (train number, day of week, hour)
+  - Shows confidence level (High/Medium/Low) based on sample size
+  - Orange indicator for late predictions, green for early
+  - Automatically learns from real-time data
 - Track trains between any two Caltrain stations
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
@@ -71,6 +76,14 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Configure in Settings tab
 
 ### ⚙️ Settings
+- **Custom themes** - Choose from 5 beautiful color schemes:
+  - 🎨 Vintage (default) - Muted red-brown with cream accents
+  - ✨ Modern - Bright blue with green accents
+  - 🌙 Dark - Light gray on near-black background with purple accents
+  - 🌊 Ocean - Deep ocean blue with teal accents
+  - 🌅 Sunset - Coral orange with golden yellow accents
+  - Theme persists across app launches
+  - Live preview with color circles in theme selector
 - Smart notification toggle (appears first for easy access)
 - Secure API key management for 511.org and Ticketmaster
 - All credentials stored in iOS Keychain
