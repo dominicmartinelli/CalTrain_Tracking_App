@@ -175,6 +175,15 @@ All Caltrain stations are supported:
   - Overlays real-time service types (Local, Limited, etc.) on scheduled trains
   - Provides service alerts and delay information
   - Merges SIRI real-time data with GTFS scheduled data for best of both worlds
+- **Delay Prediction Engine**
+  - Machine learning-based delay predictions using historical data
+  - Stores delay records locally in UserDefaults (JSON encoded)
+  - Each record contains: train number, stop code, scheduled time, actual delay, day of week, hour
+  - Pattern matching algorithm filters by train number, stop code, day of week, and hour (±1 hour tolerance)
+  - Confidence levels based on sample size: High (≥10), Medium (≥5), Low (<5)
+  - Automatic cleanup: keeps only most recent 1000 records
+  - Privacy-first: all data stored locally on device, never uploaded
+  - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
 - Robust SIRI XML/JSON response parsing
 - Haversine formula for calculating distances between venues and stations
 - Custom splash screen with fade-out animation
