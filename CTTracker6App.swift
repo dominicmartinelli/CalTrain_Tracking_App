@@ -2978,16 +2978,74 @@ actor GTFSService {
 
 actor HTTPClient {
     static let shared = HTTPClient()
-    func get(url: URL, headers: [String:String] = [:]) async throws -> (Data, HTTPURLResponse) {
+    private var lastRequestTime: [String: Date] = [:]
+    private let minimumInterval: TimeInterval = 10.0 // 10 seconds between requests to same endpoint
+
+    private func canMakeRequest(to url: URL) -> Bool {
+        let endpoint = "\(url.host ?? "")\(url.path)"
+        if let lastTime = lastRequestTime[endpoint] {
+            return Date().timeIntervalSince(lastTime) >= minimumInterval
+        }
+        return true
+    }
+
+    private func recordRequest(to url: URL) {
+        let endpoint = "\(url.host ?? "")\(url.path)"
+        lastRequestTime[endpoint] = Date()
+    }
+
+    func get(url: URL, headers: [String:String] = [:], maxRetries: Int = 3) async throws -> (Data, HTTPURLResponse) {
+        // Rate limiting: prevent excessive API calls
+        guard canMakeRequest(to: url) else {
+            throw NSError(domain: "HTTPClient", code: 429,
+                         userInfo: [NSLocalizedDescriptionKey: "Too many requests. Please wait a moment."])
+        }
+
         var req = URLRequest(url: url)
         var all = headers
         if all["Accept"] == nil { all["Accept"] = "application/json" }
         all["User-Agent"] = all["User-Agent"] ?? "CaltrainChecker/1.0"
         all.forEach { req.setValue($1, forHTTPHeaderField: $0) }
         req.timeoutInterval = 25
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        return (data, http)
+
+        // Network retry logic with exponential backoff
+        var lastError: Error?
+        for attempt in 0..<maxRetries {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+
+                // Retry on server errors (5xx) or specific client errors
+                if http.statusCode >= 500 || http.statusCode == 429 || http.statusCode == 408 {
+                    lastError = NSError(domain: "HTTPClient", code: http.statusCode,
+                                       userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+
+                    // Only retry if we have attempts left
+                    if attempt < maxRetries - 1 {
+                        let delay = pow(2.0, Double(attempt)) // Exponential: 1s, 2s, 4s
+                        debugLog("HTTP \(http.statusCode) on attempt \(attempt + 1)/\(maxRetries). Retrying in \(delay)s...")
+                        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        continue
+                    }
+                }
+
+                recordRequest(to: url)
+                return (data, http)
+            } catch {
+                lastError = error
+
+                // Retry on network errors if we have attempts left
+                if attempt < maxRetries - 1 {
+                    let delay = pow(2.0, Double(attempt))
+                    debugLog("Network error on attempt \(attempt + 1)/\(maxRetries): \(error). Retrying in \(delay)s...")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+            }
+        }
+
+        // All retries exhausted
+        throw lastError ?? URLError(.unknown)
     }
 }
 
@@ -3137,10 +3195,13 @@ struct SIRIService {
         debugLog("🚨 Fetching service alerts from: \(url.host ?? "unknown")\(url.path)")
         let (raw, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
-            let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
-            print("🚨 Service alerts HTTP error: \(http.statusCode)")
+            debugLog("🚨 Service alerts HTTP error: \(http.statusCode)")
+            // Security: Don't expose server response details to users
+            let userMessage = http.statusCode >= 500
+                ? "Service temporarily unavailable. Please try again later."
+                : "Unable to fetch service alerts. Please check your connection."
             throw NSError(domain: "SIRI-SX", code: http.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
+                          userInfo: [NSLocalizedDescriptionKey: userMessage])
         }
 
         let cleaned = String(data: raw, encoding: .utf8)?
@@ -3172,11 +3233,10 @@ struct SIRIService {
             print("🚨 Returning \(alerts.count) service alerts")
             return alerts
         } catch {
-            let snippet = String(data: cleaned, encoding: .utf8)?.prefix(280) ?? ""
-            print("🚨 Failed to decode alerts: \(error)")
+            debugLog("🚨 Failed to decode alerts: \(error)")
+            // Security: Don't expose parsing details to users
             throw NSError(domain: "SIRI-SX.decode", code: 0,
-                          userInfo: [NSLocalizedDescriptionKey:
-                                        "Couldn't parse 511 alerts response. \(error.localizedDescription)\n\(snippet)"])
+                          userInfo: [NSLocalizedDescriptionKey: "Unable to process service alerts. Please try again later."])
         }
     }
 
@@ -3195,9 +3255,13 @@ struct SIRIService {
         }
         let (raw, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
-            let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
+            debugLog("SIRI HTTP error: \(http.statusCode)")
+            // Security: Don't expose server response details to users
+            let userMessage = http.statusCode >= 500
+                ? "Service temporarily unavailable. Please try again later."
+                : "Unable to fetch real-time data. Please check your connection."
             throw NSError(domain: "SIRI", code: http.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
+                          userInfo: [NSLocalizedDescriptionKey: userMessage])
         }
         let cleaned = String(data: raw, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) ?? raw
@@ -3207,10 +3271,10 @@ struct SIRIService {
             let visits = sd?.StopMonitoringDelivery?.first?.MonitoredStopVisit ?? []
             return visits
         } catch {
-            let snippet = String(data: cleaned, encoding: .utf8)?.prefix(280) ?? ""
+            debugLog("Failed to decode SIRI response: \(error)")
+            // Security: Don't expose parsing details to users
             throw NSError(domain: "SIRI.decode", code: 0,
-                          userInfo: [NSLocalizedDescriptionKey:
-                                        "Couldn’t parse 511 response. \(error.localizedDescription)\n\(snippet)"])
+                          userInfo: [NSLocalizedDescriptionKey: "Unable to process real-time data. Please try again later."])
         }
     }
 
@@ -3301,10 +3365,13 @@ struct TicketmasterService {
         debugLog("🎟️ URL: \(url.host ?? "unknown")\(url.path)")
         let (data, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
-            let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
             debugLog("🎟️ Ticketmaster HTTP error: \(http.statusCode)")
+            // Security: Don't expose server response details to users
+            let userMessage = http.statusCode >= 500
+                ? "Event service temporarily unavailable. Please try again later."
+                : "Unable to fetch events. Please check your connection."
             throw NSError(domain: "Ticketmaster", code: http.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode). \(snippet)"])
+                          userInfo: [NSLocalizedDescriptionKey: userMessage])
         }
 
         do {
@@ -3385,8 +3452,9 @@ struct TicketmasterService {
             return events
         } catch {
             debugLog("🎟️ Failed to decode: \(error)")
+            // Security: Don't expose parsing details to users
             throw NSError(domain: "Ticketmaster.decode", code: 0,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to parse events: \(error.localizedDescription)"])
+                          userInfo: [NSLocalizedDescriptionKey: "Unable to process events. Please try again later."])
         }
     }
 }
@@ -3395,8 +3463,14 @@ struct TicketmasterService {
 final class Keychain {
     static let shared = Keychain(service: Bundle.main.bundleIdentifier ?? "CaltrainChecker")
     private let service: String
+    private let queue = DispatchQueue(label: "com.caltrainchecker.keychain", attributes: .concurrent)
+
     init(service: String) { self.service = service }
-    subscript(key: String) -> String? { get { read(key) } set { if let v = newValue { save(key, v) } else { delete(key) } } }
+
+    subscript(key: String) -> String? {
+        get { queue.sync { read(key) } }
+        set { queue.async(flags: .barrier) { if let v = newValue { self.save(key, v) } else { self.delete(key) } } }
+    }
 
     static func masked(_ key: String) -> String {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
