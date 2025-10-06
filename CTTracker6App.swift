@@ -3045,14 +3045,19 @@ struct AlertsPtSituationElement: Decodable {
 // MARK: - SIRI service
 struct SIRIService {
     static func serviceAlerts(apiKey: String) async throws -> [ServiceAlert] {
-        var comps = URLComponents(string: "http://api.511.org/transit/servicealerts")!
+        guard var comps = URLComponents(string: "https://api.511.org/transit/servicealerts") else {
+            throw NSError(domain: "SIRI-SX", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
         comps.queryItems = [
             .init(name: "api_key", value: apiKey),
             .init(name: "agency", value: "CT"),
             .init(name: "format", value: "json")
         ]
-        print("🚨 Fetching service alerts from: \(comps.url!)")
-        let (raw, http) = try await HTTPClient.shared.get(url: comps.url!)
+        guard let url = comps.url else {
+            throw NSError(domain: "SIRI-SX", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
+        }
+        print("🚨 Fetching service alerts from: \(url)")
+        let (raw, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
             print("🚨 Service alerts HTTP error: \(http.statusCode)")
@@ -3098,14 +3103,19 @@ struct SIRIService {
     }
 
     static func stopMonitoring(stopCode: String, max: Int = 6, apiKey: String) async throws -> [MonitoredStopVisitNode] {
-        var comps = URLComponents(string: "http://api.511.org/transit/StopMonitoring")!
+        guard var comps = URLComponents(string: "https://api.511.org/transit/StopMonitoring") else {
+            throw NSError(domain: "SIRI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
         comps.queryItems = [
             .init(name: "api_key", value: apiKey),
             .init(name: "agency", value: "CT"),
             .init(name: "stopcode", value: stopCode),
             .init(name: "format", value: "json")
         ]
-        let (raw, http) = try await HTTPClient.shared.get(url: comps.url!)
+        guard let url = comps.url else {
+            throw NSError(domain: "SIRI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
+        }
+        let (raw, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
             throw NSError(domain: "SIRI", code: http.statusCode,
@@ -3190,7 +3200,9 @@ struct TicketmasterService {
         let startDateTime = dateFormatter.string(from: startOfToday)
         let endDateTime = dateFormatter.string(from: endOfToday)
 
-        var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json")!
+        guard var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json") else {
+            throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
         comps.queryItems = [
             .init(name: "apikey", value: apiKey),
             .init(name: "city", value: city),
@@ -3202,9 +3214,12 @@ struct TicketmasterService {
             .init(name: "sort", value: "date,asc")
         ]
 
+        guard let url = comps.url else {
+            throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
+        }
         print("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
-        print("🎟️ URL: \(comps.url!)")
-        let (data, http) = try await HTTPClient.shared.get(url: comps.url!)
+        print("🎟️ URL: \(url)")
+        let (data, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
             print("🎟️ Ticketmaster HTTP error: \(http.statusCode)")
