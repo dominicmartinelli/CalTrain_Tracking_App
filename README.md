@@ -12,6 +12,7 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 ### 🚂 Train Tracking
 - **Complete Caltrain schedule** using GTFS static data - shows all scheduled trains
 - **Real-time enhancements** from 511.org SIRI API (service types, delays)
+- **Full schedule view** - tap section headers to view up to 50 upcoming departures in either direction
 - **Delay predictions** - machine learning-based predictions showing if trains are usually late/early
   - Predicts delays based on historical patterns (train number, day of week, hour)
   - Shows confidence level (High/Medium/Low) based on sample size
@@ -21,6 +22,7 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
 - **Time picker** to check departures at any future time - shows full schedule, not just real-time trains
+  - Smart date detection: selecting a past time automatically assumes you mean tomorrow
 - **Weather at destination** - see current conditions and temperature in section headers (via Open-Meteo API)
 - **"I took this train" button** - tap checkmark to log trips for CO₂ tracking and achievements
 - Service alerts displayed when active and highlighted at top of screen

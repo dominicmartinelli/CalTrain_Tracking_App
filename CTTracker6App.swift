@@ -992,6 +992,10 @@ struct TrainsScreen: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showNotificationPrompt = false
+    @State private var showFullScheduleSheet = false
+    @State private var fullScheduleDirection: String = "North"
+    @State private var fullScheduleStopCode: String = ""
+    @State private var fullScheduleStopName: String = ""
     @StateObject private var weatherService = WeatherService.shared
     @StateObject private var notificationManager = SmartNotificationManager.shared
 
@@ -1049,7 +1053,19 @@ struct TrainsScreen: View {
                         ForEach(north) { DepartureRow(dep: $0, destinationLabel: southboundStop.name, fromStopCode: northboundStopCode, toStopCode: southboundStopCode, direction: "North") }
                     } header: {
                         HStack {
-                            Text("Northbound from \(northboundStop.name)")
+                            Button {
+                                fullScheduleDirection = "North"
+                                fullScheduleStopCode = northboundStopCode
+                                fullScheduleStopName = northboundStop.name
+                                showFullScheduleSheet = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("Northbound from \(northboundStop.name)")
+                                    Image(systemName: "chevron.right.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue)
+                                }
+                            }
                             Spacer()
                             if let weather = weatherService.currentWeather[southboundStopCode] {
                                 HStack(spacing: 4) {
@@ -1065,7 +1081,19 @@ struct TrainsScreen: View {
                         ForEach(south) { DepartureRow(dep: $0, destinationLabel: northboundStop.name, fromStopCode: southboundStopCode, toStopCode: northboundStopCode, direction: "South") }
                     } header: {
                         HStack {
-                            Text("Southbound from \(southboundStop.name)")
+                            Button {
+                                fullScheduleDirection = "South"
+                                fullScheduleStopCode = southboundStopCode
+                                fullScheduleStopName = southboundStop.name
+                                showFullScheduleSheet = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("Southbound from \(southboundStop.name)")
+                                    Image(systemName: "chevron.right.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue)
+                                }
+                            }
                             Spacer()
                             if let weather = weatherService.currentWeather[northboundStopCode] {
                                 HStack(spacing: 4) {
@@ -1117,6 +1145,14 @@ struct TrainsScreen: View {
                 }
             } message: {
                 Text("Get notified about your usual trains, delays, and Giants game crowding.")
+            }
+            .sheet(isPresented: $showFullScheduleSheet) {
+                FullScheduleView(
+                    stopCode: fullScheduleStopCode,
+                    stopName: fullScheduleStopName,
+                    direction: fullScheduleDirection,
+                    refDate: refDate
+                )
             }
         }
     }
@@ -1354,6 +1390,114 @@ struct DepartureRow: View {
             // You could show an alert or toast here
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
+        }
+    }
+}
+
+// MARK: - Full Schedule View
+struct FullScheduleView: View {
+    let stopCode: String
+    let stopName: String
+    let direction: String
+    let refDate: Date
+
+    @State private var allDepartures: [Departure] = []
+    @State private var loading = false
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack {
+                if loading {
+                    ProgressView("Loading schedule...")
+                        .padding()
+                } else if let error = error {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        Button("Try Again") {
+                            Task { await loadFullSchedule() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
+                } else if allDepartures.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("No departures found")
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                } else {
+                    List {
+                        ForEach(allDepartures) { dep in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "—")
+                                        .font(.headline)
+                                    if let serviceType = dep.trainNumber, !serviceType.isEmpty {
+                                        Text(serviceType)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Text("\(dep.minutes)m")
+                                    .font(.title3)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("\(direction)bound from \(stopName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .task {
+                await loadFullSchedule()
+            }
+        }
+    }
+
+    func loadFullSchedule() async {
+        loading = true
+        defer { loading = false }
+        error = nil
+
+        guard let key = Keychain.shared["api_511"], !key.isEmpty else {
+            error = "API key not found. Please configure in Settings."
+            return
+        }
+
+        do {
+            // Get a large number of departures (e.g., 50) to show full schedule
+            let directionId = direction == "North" ? 0 : 1
+            let departures = try await GTFSService.shared.getScheduledDepartures(
+                stopCode: stopCode,
+                direction: directionId,
+                refDate: refDate,
+                count: 50
+            )
+
+            allDepartures = departures
+        } catch {
+            self.error = (error as NSError).localizedDescription
+            debugLog("❌ Error loading full schedule: \(error)")
         }
     }
 }
@@ -2916,7 +3060,10 @@ actor GTFSService {
         var pacificCalendar = Calendar.current
         pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
 
-        let today = pacificCalendar.startOfDay(for: refDate)
+        // Use the current date (not refDate's date) to ensure we get today's schedule
+        // refDate is only used for the time component
+        let now = Date()
+        let today = pacificCalendar.startOfDay(for: now)
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         dateFormatter.timeZone = pacificCalendar.timeZone
@@ -2974,10 +3121,7 @@ actor GTFSService {
         departures.sort { $0.minutes < $1.minutes }
         let topDepartures = departures.prefix(count)
 
-        // Get current time for calculating actual minutes until departure
-        let now = Date()
-
-        // Convert to Departure objects
+        // Convert to Departure objects (using 'now' from above)
         return topDepartures.map { dep in
 
             // Parse time to create actual departure Date
