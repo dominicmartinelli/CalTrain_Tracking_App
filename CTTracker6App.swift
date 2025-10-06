@@ -14,9 +14,9 @@ import UserNotifications
 
 // MARK: - Debug Configuration
 #if DEBUG
-private let isDebugMode = true
+private nonisolated let isDebugMode = true
 #else
-private let isDebugMode = false
+private nonisolated let isDebugMode = false
 #endif
 
 private nonisolated func debugLog(_ message: String) {
@@ -1415,7 +1415,7 @@ struct EventsScreen: View {
     @State private var loading = false
     @State private var error: String?
     @State private var selectedStation: String = "All Stations"
-    @State private var maxDistance: Double = 50.0
+    @State private var maxDistance: Double = 50.0 // Distance from SF for "All Stations", or from selected station
 
     private var allStationNames: [String] {
         var stations = ["All Stations"]
@@ -1430,9 +1430,14 @@ struct EventsScreen: View {
             return capacity >= 20000
         }
 
-        // Then filter by station if selected
+        // Then filter by station/distance
         if selectedStation == "All Stations" {
-            return largeEvents
+            // Filter by distance from San Francisco (37.7749, -122.4194)
+            return largeEvents.filter { event in
+                guard let lat = event.venueLatitude, let lon = event.venueLongitude else { return false }
+                let distance = haversine(lat1: 37.7749, lon1: -122.4194, lat2: lat, lon2: lon)
+                return distance <= maxDistance
+            }
         }
 
         return largeEvents.filter { event in
@@ -1466,7 +1471,49 @@ struct EventsScreen: View {
                     }
                     .padding()
                 } else {
-                    ZStack(alignment: .top) {
+                    VStack(spacing: 0) {
+                        // Filter controls - always visible
+                        VStack(spacing: 12) {
+                            Menu {
+                                Picker("Station", selection: $selectedStation) {
+                                    ForEach(allStationNames, id: \.self) { station in
+                                        Text(station).tag(station)
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Text("Station:")
+                                        .foregroundStyle(.secondary)
+                                    Text(selectedStation)
+                                        .fontWeight(.medium)
+                                    Spacer()
+                                    Image(systemName: "chevron.down")
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
+                                .background(Color(.secondarySystemBackground))
+                                .cornerRadius(8)
+                            }
+
+                            VStack(spacing: 4) {
+                                HStack {
+                                    Text(selectedStation == "All Stations" ? "Max Distance from SF" : "Max Distance")
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", maxDistance)) mi")
+                                        .foregroundStyle(.secondary)
+                                }
+                                if selectedStation == "All Stations" {
+                                    Slider(value: $maxDistance, in: 5...100, step: 5)
+                                } else {
+                                    Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
+                                }
+                            }
+                        }
+                        .padding()
+                        .background(Color(.systemGroupedBackground))
+
                         // Events list or empty state
                         if filteredEvents.isEmpty {
                             VStack(spacing: 16) {
@@ -1497,46 +1544,6 @@ struct EventsScreen: View {
                                 }
                             }
                             .listStyle(.insetGrouped)
-                            .safeAreaInset(edge: .top, spacing: 0) {
-                                VStack(spacing: 12) {
-                                    Menu {
-                                        Picker("Station", selection: $selectedStation) {
-                                            ForEach(allStationNames, id: \.self) { station in
-                                                Text(station).tag(station)
-                                            }
-                                        }
-                                    } label: {
-                                        HStack {
-                                            Text("Station:")
-                                                .foregroundStyle(.secondary)
-                                            Text(selectedStation)
-                                                .fontWeight(.medium)
-                                            Spacer()
-                                            Image(systemName: "chevron.down")
-                                                .foregroundStyle(.secondary)
-                                                .font(.caption)
-                                        }
-                                        .padding(.horizontal)
-                                        .padding(.vertical, 8)
-                                        .background(Color(.secondarySystemBackground))
-                                        .cornerRadius(8)
-                                    }
-
-                                    if selectedStation != "All Stations" {
-                                        VStack(spacing: 4) {
-                                            HStack {
-                                                Text("Max Distance")
-                                                Spacer()
-                                                Text("\(String(format: "%.1f", maxDistance)) mi")
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
-                                        }
-                                    }
-                                }
-                                .padding()
-                                .background(Color(.systemGroupedBackground))
-                            }
                         }
                     }
                 }
@@ -1614,6 +1621,21 @@ struct EventRow: View {
 }
 
 // MARK: - Domain & Networking
+
+// Haversine formula for calculating distance between two lat/lon coordinates (in miles)
+private func haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
+    let earthRadiusMiles = 3959.0
+    let lat1Rad = lat1 * .pi / 180
+    let lat2Rad = lat2 * .pi / 180
+    let dLat = (lat2 - lat1) * .pi / 180
+    let dLon = (lon2 - lon1) * .pi / 180
+
+    let a = sin(dLat/2) * sin(dLat/2) +
+            cos(lat1Rad) * cos(lat2Rad) *
+            sin(dLon/2) * sin(dLon/2)
+    let c = 2 * atan2(sqrt(a), sqrt(1-a))
+    return earthRadiusMiles * c
+}
 
 // Station model
 struct CaltrainStop: Identifiable, Codable, Hashable {
