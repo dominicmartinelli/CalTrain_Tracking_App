@@ -16,7 +16,8 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
 - **Time picker** to check departures at any future time - shows full schedule, not just real-time trains
-- **Weather at destination** - see current conditions and temperature where you're headed
+- **Weather at destination** - see current conditions and temperature in section headers (via Open-Meteo API)
+- **"I took this train" button** - tap checkmark to log trips for CO₂ tracking and achievements
 - Service alerts displayed when active and highlighted at top of screen
 - Automatic GTFS feed updates (24-hour cache)
 
@@ -46,23 +47,33 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Supports all 27 Caltrain stations from Gilroy to San Francisco
 - Visual route preview with northbound/southbound indicators
 
-### 🧠 Smart Features
-- **Smart Notifications** - opt-in alerts for:
+### 📊 Commute Insights (Dedicated Tab)
+- **Streak Tracking** - maintain daily riding streaks with fire emoji 🔥
+- **Achievement Badges** - unlock 8 achievements:
+  - 🚂 First Ride - Take your first trip
+  - 🔥 Week Warrior - 5 day streak
+  - ⭐ Month Master - 20 trips in a month
+  - 🌱 Eco Hero - Save 500 lbs CO₂
+  - 👑 Commute King - 100 total trips
+  - 🌅 Early Bird - Train before 7 AM
+  - 🦉 Night Owl - Train after 9 PM
+  - 🎒 Weekend Explorer - 10 weekend trips
+- **Weekly Stats** - track schedule checks and most common routes
+- **Environmental Impact** - CO₂ savings calculator (only counts manually logged trips)
+- **Pattern Detection** - learns your regular commute routes and times
+- **Privacy-first** - all data stored locally on device, never uploaded
+
+### 🔔 Smart Notifications
+- Opt-in alerts for:
   - Your usual trains departing soon
   - Service delays on your regular routes
   - Giants game crowding warnings
-- **Commute Insights** - track your usage with:
-  - Weekly stats on train checks
-  - Pattern detection (learns your regular routes and times)
-  - CO₂ savings calculator (vs. driving)
-  - Environmental impact tracking
-- **Privacy-first** - all data stored locally on device, never uploaded
+- Configure in Settings tab
 
 ### ⚙️ Settings
+- Smart notification toggle (appears first for easy access)
 - Secure API key management for 511.org and Ticketmaster
 - All credentials stored in iOS Keychain
-- Smart notification toggle
-- Commute insights and statistics
 - About page with data attribution and compliance info
 
 ## Setup
@@ -85,12 +96,13 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
    - **Southern Station**: Your station closer to San Jose (e.g., Mountain View)
    - **Northern Station**: Your station closer to SF (e.g., 22nd Street)
 4. (Optional) Go to **Settings** tab to add Ticketmaster API key for events
-5. The app will show:
-   - **Trains**: Northbound (southern → northern) and Southbound (northern → southern)
-   - **Events**: Today's events in the Bay Area
+5. The app has 6 tabs:
+   - **Trains**: Northbound and Southbound departures with weather
+   - **Events**: Today's Bay Area events near Caltrain stations
    - **Alerts**: Service disruptions with visual status
-   - **Stations**: Configure your commute stations
-   - **Settings**: Manage API keys and view about info
+   - **Insights**: Streak tracking, achievements, CO₂ savings, and patterns
+   - **Stations**: Configure and save multiple commute routes
+   - **Settings**: Smart notifications toggle and API key management
 
 ## Requirements
 
@@ -159,12 +171,14 @@ All Caltrain stations are supported:
 
 - **Caltrain GTFS Feed**: Static schedule data from https://data.trilliumtransit.com/gtfs/caltrain-ca-us/
 - **511.org Transit API**: Real-time service types, delays, and service alerts
+- **Open-Meteo API**: Free weather data (no API key required)
 - **Ticketmaster Discovery API**: Bay Area events information
 
 ## Data Attribution & Disclaimer
 
 - Static schedule data provided by Caltrain GTFS feed via Trillium Transit
 - Real-time data and service alerts provided by 511.org
+- Weather data provided by Open-Meteo (https://open-meteo.com)
 - Events data provided by Ticketmaster Discovery API
 - Transit times are estimates only and provided "as is" without warranty
 - Always verify departure times before traveling
