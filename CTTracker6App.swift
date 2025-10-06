@@ -48,10 +48,19 @@ private let EmbeddedAPIKey_SIMULATOR_ONLY: String? = {
 @inline(__always)
 func isLikelyAPIKey(_ key: String) -> Bool {
     let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty, trimmed.count <= 256 else { return false }
+
+    // Require minimum 16 characters for security, max 256 for sanity
+    guard trimmed.count >= 16, trimmed.count <= 256 else { return false }
+
     // Allow letters, numbers, hyphens, underscores, and dots (common in API keys)
     let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.")
-    return trimmed.unicodeScalars.allSatisfy { allowed.contains($0) }
+    guard trimmed.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+
+    // Require at least one letter and one number for added security
+    let hasLetter = trimmed.rangeOfCharacter(from: .letters) != nil
+    let hasNumber = trimmed.rangeOfCharacter(from: .decimalDigits) != nil
+
+    return hasLetter && hasNumber
 }
 
 // MARK: - App Entry (single @main)
@@ -2549,8 +2558,24 @@ actor GTFSService {
                     throw NSError(domain: "GTFS", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unsupported ZIP compression method: \(compMethod)"])
                 }
 
+                // Validate filename to prevent path traversal attacks
+                guard !fileName.contains(".."),
+                      !fileName.hasPrefix("/"),
+                      !fileName.contains("~"),
+                      !fileName.isEmpty else {
+                    throw NSError(domain: "GTFS", code: 5, userInfo: [NSLocalizedDescriptionKey: "Invalid file path in ZIP archive"])
+                }
+
                 // Write file
                 let filePath = destDir.appendingPathComponent(fileName)
+
+                // Ensure final path is within destination directory (security check)
+                let canonicalDest = destDir.standardized.path
+                let canonicalFile = filePath.standardized.path
+                guard canonicalFile.hasPrefix(canonicalDest) else {
+                    throw NSError(domain: "GTFS", code: 6, userInfo: [NSLocalizedDescriptionKey: "Path traversal attempt detected in ZIP"])
+                }
+
                 try fileManager.createDirectory(at: filePath.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try decompData.write(to: filePath)
 
@@ -2562,6 +2587,21 @@ actor GTFSService {
     }
 
     private func decompress(_ data: Data, uncompressedSize: Int) throws -> Data {
+        // Security: Prevent ZIP bombs and excessive memory allocation
+        let maxUncompressedSize = 50_000_000 // 50MB per file
+        guard uncompressedSize > 0, uncompressedSize <= maxUncompressedSize else {
+            throw NSError(domain: "GTFS", code: 7, userInfo: [NSLocalizedDescriptionKey: "Invalid or excessive uncompressed size: \(uncompressedSize)"])
+        }
+
+        // Security: Validate compression ratio to prevent ZIP bombs
+        guard data.count > 0 else {
+            throw NSError(domain: "GTFS", code: 8, userInfo: [NSLocalizedDescriptionKey: "Empty compressed data"])
+        }
+        let compressionRatio = Double(uncompressedSize) / Double(data.count)
+        guard compressionRatio <= 100 else { // Max 100:1 compression ratio
+            throw NSError(domain: "GTFS", code: 9, userInfo: [NSLocalizedDescriptionKey: "Suspicious compression ratio detected (possible ZIP bomb)"])
+        }
+
         // Use Apple's Compression framework (available on iOS 9+)
         let sourceBuffer = [UInt8](data)
         let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: uncompressedSize)
@@ -3094,7 +3134,7 @@ struct SIRIService {
         guard let url = comps.url else {
             throw NSError(domain: "SIRI-SX", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
         }
-        print("🚨 Fetching service alerts from: \(url)")
+        debugLog("🚨 Fetching service alerts from: \(url.host ?? "unknown")\(url.path)")
         let (raw, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: raw, encoding: .utf8)?.prefix(200) ?? ""
@@ -3258,7 +3298,7 @@ struct TicketmasterService {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
         }
         debugLog("🎟️ Fetching Ticketmaster events for today (\(startDateTime) to \(endDateTime))")
-        debugLog("🎟️ URL: \(url)")
+        debugLog("🎟️ URL: \(url.host ?? "unknown")\(url.path)")
         let (data, http) = try await HTTPClient.shared.get(url: url)
         guard (200..<300).contains(http.statusCode) else {
             let snippet = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
@@ -3372,14 +3412,10 @@ final class Keychain {
             kSecAttrAccount as String: key,
             kSecValueData as String: data
         ]
-        print("🔐 Keychain saving key=\(key) value_length=\(value.count)")
+        debugLog("🔐 Keychain saving key=\(key) value_length=\(value.count)")
         SecItemDelete(q as CFDictionary)
         let status = SecItemAdd(q as CFDictionary, nil)
-        if status != errSecSuccess {
-            print("🔐 Keychain save FAILED: \(status)")
-        } else {
-            print("🔐 Keychain save SUCCESS")
-        }
+        debugLog("🔐 Keychain save status: \(status == errSecSuccess ? "SUCCESS" : "FAILED(\(status))")")
     }
     private func read(_ key: String) -> String? {
         let q: [String:Any] = [
