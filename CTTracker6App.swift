@@ -200,12 +200,15 @@ struct RootView: View {
                 }
                 .badge(alerts.isEmpty ? 0 : alerts.count)
                 .tag(2)
+            InsightsView()
+                .tabItem { Label("Insights", systemImage: "chart.bar.fill") }
+                .tag(3)
             StationsScreen()
                 .tabItem { Label("Stations", systemImage: "mappin.and.ellipse") }
-                .tag(3)
+                .tag(4)
             SettingsScreen()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(4)
+                .tag(5)
         }
         .accentColor(alerts.isEmpty ? .green : .red)
         .fullScreenCover(isPresented: needsKeyBinding) {
@@ -661,6 +664,29 @@ struct SettingsScreen: View {
         NavigationStack {
             Form {
 
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { notificationManager.notificationsEnabled },
+                        set: { enabled in
+                            if enabled && !notificationManager.notificationsEnabled {
+                                notificationManager.requestPermission()
+                            } else if !enabled {
+                                // Open Settings to disable
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                        }
+                    )) {
+                        Label("Smart Notifications", systemImage: "bell.badge")
+                    }
+                } header: {
+                    Text("Smart Features")
+                } footer: {
+                    Text("Get notified about your usual trains, delays, and Giants game crowding")
+                        .font(.caption2)
+                }
+
                 Section("511.org API") {
                     SecureField("API Key", text: $apiKey511)
                         .textInputAutocapitalization(.never)
@@ -723,29 +749,6 @@ struct SettingsScreen: View {
                     Text("Get your free API key from developer.ticketmaster.com")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                Section("Smart Features") {
-                    Toggle(isOn: Binding(
-                        get: { notificationManager.notificationsEnabled },
-                        set: { enabled in
-                            if enabled && !notificationManager.notificationsEnabled {
-                                notificationManager.requestPermission()
-                            } else if !enabled {
-                                // Open Settings to disable
-                                if let url = URL(string: UIApplication.openSettingsURLString) {
-                                    UIApplication.shared.open(url)
-                                }
-                            }
-                        }
-                    )) {
-                        Label("Smart Notifications", systemImage: "bell.badge")
-                    }
-
-                    NavigationLink {
-                        InsightsView()
-                    } label: {
-                        Label("Commute Insights", systemImage: "chart.bar")
-                    }
                 }
 
                 Section {
