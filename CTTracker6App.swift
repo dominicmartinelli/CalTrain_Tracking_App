@@ -1416,6 +1416,7 @@ struct EventsScreen: View {
     @State private var error: String?
     @State private var selectedStation: String = "All Stations"
     @State private var maxDistance: Double = 5.0 // Distance from any/selected Caltrain station
+    @State private var showAllCapacities: Bool = false // Toggle to show events of any capacity
 
     private var allStationNames: [String] {
         var stations = ["All Stations"]
@@ -1424,25 +1425,52 @@ struct EventsScreen: View {
     }
 
     private var filteredEvents: [BayAreaEvent] {
-        // First filter by capacity (20,000+)
-        let largeEvents = events.filter { event in
-            guard let capacity = event.venueCapacity else { return false }
-            return capacity >= 20000
+        debugLog("🎟️ Filtering \(events.count) total events")
+
+        // First filter by capacity (20,000+ unless showAllCapacities is enabled)
+        let largeEvents: [BayAreaEvent]
+        if showAllCapacities {
+            largeEvents = events
+            debugLog("🎟️ Showing all capacities: \(largeEvents.count) events")
+        } else {
+            largeEvents = events.filter { event in
+                guard let capacity = event.venueCapacity else {
+                    debugLog("🎟️ Event '\(event.name)' filtered out: no capacity data")
+                    return false
+                }
+                let isLarge = capacity >= 20000
+                if !isLarge {
+                    debugLog("🎟️ Event '\(event.name)' filtered out: capacity \(capacity) < 20000")
+                }
+                return isLarge
+            }
+            debugLog("🎟️ After capacity filter: \(largeEvents.count) events")
         }
 
         // Then filter by station/distance
         if selectedStation == "All Stations" {
             // Show events within maxDistance of ANY Caltrain station
-            return largeEvents.filter { event in
-                guard let nearest = event.nearestStation else { return false }
-                return nearest.distance <= maxDistance
+            let filtered = largeEvents.filter { event in
+                guard let nearest = event.nearestStation else {
+                    debugLog("🎟️ Event '\(event.name)' filtered out: no nearest station")
+                    return false
+                }
+                let withinRange = nearest.distance <= maxDistance
+                if !withinRange {
+                    debugLog("🎟️ Event '\(event.name)' filtered out: \(String(format: "%.1f", nearest.distance)) mi from \(nearest.station.name) > \(String(format: "%.1f", maxDistance)) mi")
+                }
+                return withinRange
             }
+            debugLog("🎟️ After distance filter: \(filtered.count) events")
+            return filtered
         }
 
-        return largeEvents.filter { event in
+        let filtered = largeEvents.filter { event in
             guard let nearest = event.nearestStation else { return false }
             return nearest.station.name == selectedStation && nearest.distance <= maxDistance
         }
+        debugLog("🎟️ After station filter: \(filtered.count) events")
+        return filtered
     }
 
     var body: some View {
@@ -1507,6 +1535,15 @@ struct EventsScreen: View {
                                     Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
                                 } else {
                                     Slider(value: $maxDistance, in: 0.5...10.0, step: 0.5)
+                                }
+                            }
+
+                            Toggle(isOn: $showAllCapacities) {
+                                HStack {
+                                    Text("Show All Venues")
+                                    Text("(incl. small venues)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
