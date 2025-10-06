@@ -171,6 +171,8 @@ All Caltrain stations are supported:
   - Parses CSV files: stops.txt, trips.txt, stop_times.txt, calendar.txt, calendar_dates.txt
   - Service calendar logic determines which trips run on which days (handles weekdays and exception dates)
   - Handles GTFS time format (supports times like "25:30:00" for next day)
+  - Includes after-midnight trains (up to 5 AM) in evening schedules
+  - Automatically fetches tomorrow's early morning service when viewing late-night departures
   - Calculates actual minutes until departure from current time
   - 24-hour cache with automatic refresh
 - **SIRI API integration** for real-time enhancements
@@ -188,7 +190,7 @@ All Caltrain stations are supported:
   - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
 - **Security Features**
   - Thread-safe Keychain access with concurrent DispatchQueue
-  - API rate limiting (10 seconds between requests to same endpoint)
+  - API rate limiting (30 seconds between requests to same endpoint)
   - Network retry logic with exponential backoff (1s, 2s, 4s)
   - Sanitized error messages (no server response leaks)
   - ZIP path traversal and ZIP bomb protection

@@ -1485,16 +1485,21 @@ struct FullScheduleView: View {
         }
 
         do {
-            // Get a large number of departures (e.g., 50) to show full schedule
+            // Get a large number of departures to show full schedule
+            // Use current time (Date()) instead of refDate to ensure accurate minutes calculation
             let directionId = direction == "North" ? 0 : 1
+            let now = Date()
+
+            // Get more departures (100) to include trains after midnight
             let departures = try await GTFSService.shared.getScheduledDepartures(
                 stopCode: stopCode,
                 direction: directionId,
-                refDate: refDate,
-                count: 50
+                refDate: now,
+                count: 100
             )
 
-            allDepartures = departures
+            // Filter to only show trains with positive minutes (future departures)
+            allDepartures = departures.filter { $0.minutes > 0 }
         } catch {
             self.error = (error as NSError).localizedDescription
             debugLog("❌ Error loading full schedule: \(error)")
@@ -3092,6 +3097,7 @@ actor GTFSService {
         // Parse departure times and filter for times after reference time
         var departures: [(time: String, minutes: Int, tripId: String, departureDate: Date)] = []
 
+        // Process today's departures
         for st in relevantStopTimes {
             let timeComponents = st.departureTime.split(separator: ":")
             guard timeComponents.count == 3,
@@ -3114,6 +3120,39 @@ actor GTFSService {
             if totalMinutes >= refMinutes {
                 let minutesUntil = totalMinutes - refMinutes
                 departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
+            }
+        }
+
+        // Also add tomorrow's early morning trains (before 3 AM) to ensure we show after-midnight departures
+        if let tomorrow = pacificCalendar.date(byAdding: .day, value: 1, to: today) {
+            let tomorrowStr = dateFormatter.string(from: tomorrow)
+            let tomorrowWeekday = pacificCalendar.component(.weekday, from: tomorrow)
+            let tomorrowServices = getActiveServices(dateStr: tomorrowStr, weekday: tomorrowWeekday)
+
+            let tomorrowTrips = trips.filter { trip in
+                trip.directionId == direction && tomorrowServices.contains(trip.serviceId)
+            }
+
+            let tomorrowStopTimes = stopTimes.filter { st in
+                st.stopId == stopId && tomorrowTrips.contains { $0.tripId == st.tripId }
+            }
+
+            // Add early morning trains from tomorrow (before 5 AM to catch all after-midnight service)
+            for st in tomorrowStopTimes {
+                let timeComponents = st.departureTime.split(separator: ":")
+                guard timeComponents.count == 3,
+                      let hours = Int(timeComponents[0]),
+                      let minutes = Int(timeComponents[1]) else { continue }
+
+                // Include trains before 5 AM (both regular time and GTFS 24+ format)
+                let isEarlyMorning = (hours < 5) || (hours >= 24 && hours < 29)
+                guard isEarlyMorning else { continue }
+
+                // Handle both regular and GTFS 24+ time format
+                let actualHours = hours >= 24 ? hours - 24 : hours
+                let totalMinutes = actualHours * 60 + minutes
+                let minutesUntilFromNow = (24 * 60 - refMinutes) + totalMinutes // Minutes from now until tomorrow's train
+                departures.append((st.departureTime, minutesUntilFromNow, st.tripId, tomorrow))
             }
         }
 
@@ -3197,7 +3236,7 @@ actor GTFSService {
 actor HTTPClient {
     static let shared = HTTPClient()
     private var lastRequestTime: [String: Date] = [:]
-    private let minimumInterval: TimeInterval = 10.0 // 10 seconds between requests to same endpoint
+    private let minimumInterval: TimeInterval = 30.0 // 30 seconds between requests to same endpoint
 
     private func canMakeRequest(to url: URL) -> Bool {
         let endpoint = "\(url.host ?? "")\(url.path)"
