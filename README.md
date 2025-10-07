@@ -190,7 +190,7 @@ All Caltrain stations are supported:
   - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
 - **Security Features**
   - Thread-safe Keychain access with concurrent DispatchQueue
-  - API rate limiting (30 seconds between requests to same endpoint)
+  - API rate limiting (5 seconds between requests to same endpoint)
   - Network retry logic with exponential backoff (1s, 2s, 4s)
   - Sanitized error messages (no server response leaks)
   - ZIP path traversal and ZIP bomb protection

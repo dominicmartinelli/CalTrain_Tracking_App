@@ -3240,7 +3240,7 @@ actor GTFSService {
 actor HTTPClient {
     static let shared = HTTPClient()
     private var lastRequestTime: [String: Date] = [:]
-    private let minimumInterval: TimeInterval = 30.0 // 30 seconds between requests to same endpoint
+    private let minimumInterval: TimeInterval = 5.0 // 5 seconds between requests to same endpoint
 
     private func canMakeRequest(to url: URL) -> Bool {
         let endpoint = "\(url.host ?? "")\(url.path)"
