@@ -1240,12 +1240,16 @@ struct TrainsScreen: View {
                     }
                 }
 
-                // Update with real-time service type if available
+                // Update with real-time data (service type, actual departure time, and minutes)
                 if let serviceType = matchingRealtime.trainNumber, !serviceType.isEmpty {
+                    // Use real-time departure time if available, otherwise use scheduled
+                    let actualDepTime = matchingRealtime.depTime ?? scheduledDep.depTime
+                    let actualMinutes = matchingRealtime.minutes
+
                     result[index] = Departure(
                         journeyRef: scheduledDep.journeyRef,
-                        minutes: scheduledDep.minutes,
-                        depTime: scheduledDep.depTime,
+                        minutes: actualMinutes,
+                        depTime: actualDepTime,
                         direction: scheduledDep.direction,
                         destination: scheduledDep.destination,
                         trainNumber: serviceType
