@@ -1694,7 +1694,14 @@ struct EventsScreen: View {
         NavigationStack {
             Group {
                 if loading {
-                    ProgressView("Loading events…")
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading events…")
+                            .foregroundStyle(.secondary)
+                        Text("This may take 20-30 seconds")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
                 } else if let error {
                     VStack {
                         Text(error)
@@ -3360,7 +3367,9 @@ actor HTTPClient {
         if all["Accept"] == nil { all["Accept"] = "application/json" }
         all["User-Agent"] = all["User-Agent"] ?? "CaltrainChecker/1.0"
         all.forEach { req.setValue($1, forHTTPHeaderField: $0) }
-        req.timeoutInterval = 25
+
+        // Longer timeout for Ticketmaster API which can be slow with large result sets
+        req.timeoutInterval = url.host?.contains("ticketmaster") == true ? 45 : 25
 
         // Network retry logic with exponential backoff
         var lastError: Error?
