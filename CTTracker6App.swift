@@ -3683,7 +3683,7 @@ struct SIRIService {
 
 // MARK: - Ticketmaster API
 struct TicketmasterService {
-    static func searchEvents(apiKey: String, city: String = "San Francisco", radius: String = "50", date: Date = Date()) async throws -> [BayAreaEvent] {
+    static func searchEvents(apiKey: String, city: String = "San Jose", radius: String = "75", date: Date = Date()) async throws -> [BayAreaEvent] {
         // Get the selected date's start and end
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
