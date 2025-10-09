@@ -292,6 +292,9 @@ struct RootView: View {
             return
         }
 
+        // Wait 5 seconds to avoid rate limit (Trains screen just loaded)
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+
         do {
             // Get northbound and southbound departures
             let northDeps = try await SIRIService.nextDepartures(
@@ -992,9 +995,9 @@ struct SettingsScreen: View {
 
     #if DEBUG
     private func addTestDelayData() {
-        // Get the current station codes
-        let northStopCode = UserDefaults.standard.string(forKey: "northboundStopCode") ?? "70262" // Mountain View
-        let southStopCode = UserDefaults.standard.string(forKey: "southboundStopCode") ?? "70011" // 22nd St
+        // Get the current station codes from UserDefaults (same key as @AppStorage)
+        let northStopCode = UserDefaults.standard.string(forKey: "northboundStopCode") ?? CaltrainStops.defaultNorthbound.stopCode
+        let southStopCode = UserDefaults.standard.string(forKey: "southboundStopCode") ?? CaltrainStops.defaultSouthbound.stopCode
 
         // Get current hour to match test data with current time
         let calendar = Calendar.current
@@ -1002,14 +1005,22 @@ struct SettingsScreen: View {
         let currentHour = calendar.component(.hour, from: now)
         let currentWeekday = calendar.component(.weekday, from: now)
 
-        print("🧪 Creating test delay data for current time: hour \(currentHour), weekday \(currentWeekday)")
-        print("🧪 Stations: North=\(northStopCode), South=\(southStopCode)")
+        // Get station names for display
+        let allStations = CaltrainStops.northbound + CaltrainStops.southbound
+        let northStation = allStations.first { $0.stopCode == northStopCode }?.name ?? "Unknown"
+        let southStation = allStations.first { $0.stopCode == southStopCode }?.name ?? "Unknown"
 
-        // Add test data for common trains - use actual train numbers from GTFS
-        let testTrains = ["167", "169", "193", "197", "217", "221"]
+        print("🧪 Creating test delay data for current time: hour \(currentHour), weekday \(currentWeekday)")
+        print("🧪 Stations: North=\(northStation) (\(northStopCode)), South=\(southStation) (\(southStopCode))")
+
+        // In DEBUG mode, add delay predictions for ALL train numbers (100-300)
+        // This ensures any train that shows up will have delay predictions
         var totalRecords = 0
 
-        for trainNumber in testTrains {
+        // Cover all possible Caltrain train numbers
+        for trainNumber in 100...300 {
+            let trainNumStr = String(trainNumber)
+
             // Add 12 delay records for each train to get "High" confidence
             for i in 0..<12 {
                 // Create records from past weeks, same weekday and hour as now
@@ -1030,7 +1041,7 @@ struct SettingsScreen: View {
                 let stopCode = i.isMultiple(of: 2) ? northStopCode : southStopCode
 
                 DelayPredictor.shared.recordDelay(
-                    trainNumber: trainNumber,
+                    trainNumber: trainNumStr,
                     stopCode: stopCode,
                     scheduledTime: scheduledTime,
                     actualDelay: delay
@@ -1039,12 +1050,12 @@ struct SettingsScreen: View {
             }
         }
 
-        print("✅ Added \(totalRecords) test delay records for trains: \(testTrains.joined(separator: ", "))")
-        print("📊 Go to Trains screen and look for these train numbers!")
-        print("🔔 You should see orange 'Usually X min late' indicators")
+        print("✅ Added \(totalRecords) test delay records for ALL train numbers (100-300)")
+        print("📊 Go to Trains screen - ALL trains will show delay predictions!")
+        print("🔔 You should see orange 'Usually X min late' indicators on every train")
 
         // Show success message to user
-        statusTicketmaster = "Added \(totalRecords) test delay records"
+        statusTicketmaster = "Added \(totalRecords) test delay records for all trains"
         statusTicketmasterColor = .green
     }
     #endif
@@ -1415,16 +1426,23 @@ struct TrainsScreen: View {
 
     // Merge GTFS scheduled times with SIRI real-time service types
     private func mergeScheduledWithRealtime(scheduled: [Departure], realtime: [Departure]) -> [Departure] {
+        debugLog("🔀 Merging \(scheduled.count) scheduled with \(realtime.count) realtime departures")
         var result = scheduled
 
         // Match scheduled trains with real-time data by approximate departure time
         for (index, scheduledDep) in result.enumerated() {
-            guard let scheduledTime = scheduledDep.depTime else { continue }
+            guard let scheduledTime = scheduledDep.depTime else {
+                debugLog("  ⏭️ Skipping scheduled #\(index) - no depTime")
+                continue
+            }
+
+            debugLog("  🔍 Looking for realtime match for scheduled at \(scheduledTime.formatted(date: .omitted, time: .shortened))")
 
             // Find matching real-time departure (within 2 minutes)
             if let matchingRealtime = realtime.first(where: { realtimeDep in
                 guard let realtimeTime = realtimeDep.depTime else { return false }
                 let diff = abs(scheduledTime.timeIntervalSince(realtimeTime))
+                debugLog("    Comparing with realtime at \(realtimeTime.formatted(date: .omitted, time: .shortened)) - diff: \(Int(diff))s")
                 return diff < 120 // 2 minutes tolerance
             }) {
                 debugLog("🔍 Matched realtime for \(scheduledDep.destination ?? "unknown") - trainNumber: '\(matchingRealtime.trainNumber ?? "nil")'")
