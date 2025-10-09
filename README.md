@@ -31,11 +31,12 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 ### 🎟️ Bay Area Events
 - **Date picker** - browse events for today or any future date
 - **Smart filtering** - show all venues or only large venues (20,000+ capacity)
+  - Chase Center events always included (18,064 capacity, home of Golden State Warriors)
 - **Station-based search** - filter by "All Stations" or specific Caltrain station
 - **Adjustable distance radius** - 0.5 to 10 miles from selected station(s)
 - Powered by Ticketmaster Discovery API
 - Event details include venue, time, ticket links, and nearest Caltrain station
-- Covers concerts, sports (including Giants games), theater, and more
+- Covers concerts, sports (including Warriors and Giants games), theater, and more
 - Perfect for planning weekend trips or finding events near your commute
 
 ### 🚨 Service Alerts
@@ -185,7 +186,7 @@ All Caltrain stations are supported:
   - Each record contains: train number, stop code, scheduled time, actual delay, day of week, hour
   - Pattern matching algorithm filters by train number, stop code, day of week, and hour (±1 hour tolerance)
   - Confidence levels based on sample size: High (≥10), Medium (≥5), Low (<5)
-  - Automatic cleanup: keeps only most recent 1000 records
+  - Automatic cleanup: keeps only most recent 500 records (optimized for memory)
   - Privacy-first: all data stored locally on device, never uploaded
   - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
 - **Security Features**

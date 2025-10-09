@@ -1494,12 +1494,12 @@ struct FullScheduleView: View {
             let directionId = direction == "North" ? 0 : 1
             let now = Date()
 
-            // Get more departures (100) to include trains after midnight
+            // Reduced to 50 departures for memory optimization
             let departures = try await GTFSService.shared.getScheduledDepartures(
                 stopCode: stopCode,
                 direction: directionId,
                 refDate: now,
-                count: 100
+                count: 50
             )
 
             // Filter to only show trains with positive minutes (future departures)
@@ -1588,6 +1588,12 @@ struct EventsScreen: View {
             debugLog("🎟️ Showing all capacities: \(largeEvents.count) events")
         } else {
             largeEvents = events.filter { event in
+                // Always include Chase Center events (18,064 capacity)
+                if let venueName = event.venueName, venueName.lowercased().contains("chase center") {
+                    debugLog("🎟️ Event '\(event.name)' included: Chase Center (always shown)")
+                    return true
+                }
+
                 guard let capacity = event.venueCapacity else {
                     debugLog("🎟️ Event '\(event.name)' filtered out: no capacity data")
                     return false
@@ -2083,7 +2089,7 @@ struct DelayRecord: Codable {
 class DelayPredictor {
     static let shared = DelayPredictor()
     private let delayKey = "delayHistory"
-    private let maxRecords = 1000
+    private let maxRecords = 500 // Reduced for memory optimization
 
     func recordDelay(trainNumber: String, stopCode: String, scheduledTime: Date, actualDelay: Int) {
         var records = loadRecords()
@@ -3069,20 +3075,36 @@ actor GTFSService {
         var pacificCalendar = Calendar.current
         pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
 
-        // Use the current date (not refDate's date) to ensure we get today's schedule
-        // refDate is only used for the time component
         let now = Date()
-        let today = pacificCalendar.startOfDay(for: now)
+
+        // Check if refDate time is in the past compared to now
+        let refComponents = pacificCalendar.dateComponents([.hour, .minute], from: refDate)
+        let nowComponents = pacificCalendar.dateComponents([.hour, .minute], from: now)
+        let refMinutes = (refComponents.hour ?? 0) * 60 + (refComponents.minute ?? 0)
+        let nowMinutes = (nowComponents.hour ?? 0) * 60 + (nowComponents.minute ?? 0)
+
+        // If selected time is before current time, assume user means tomorrow
+        let isNextDay = refMinutes < nowMinutes
+
+        // Use today or tomorrow based on whether the time is in the past
+        var targetDate = pacificCalendar.startOfDay(for: now)
+        if isNextDay {
+            guard let tomorrow = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) else {
+                throw NSError(domain: "GTFSService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Date calculation failed"])
+            }
+            targetDate = tomorrow
+        }
+
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         dateFormatter.timeZone = pacificCalendar.timeZone
-        let todayStr = dateFormatter.string(from: today)
+        let targetDateStr = dateFormatter.string(from: targetDate)
 
-        // Get weekday (1 = Sunday, 2 = Monday, ..., 7 = Saturday)
-        let weekday = pacificCalendar.component(.weekday, from: today)
+        // Get weekday
+        let weekday = pacificCalendar.component(.weekday, from: targetDate)
 
-        // Find active services for today
-        let activeServices = getActiveServices(dateStr: todayStr, weekday: weekday)
+        // Find active services for target date
+        let activeServices = getActiveServices(dateStr: targetDateStr, weekday: weekday)
 
         // Find trips for this direction and active services
         let relevantTrips = trips.filter { trip in
@@ -3090,18 +3112,16 @@ actor GTFSService {
         }
 
         // Get stop times for these trips at our stop
+        // Use Set for faster lookup and reduce memory usage
+        let relevantTripIds = Set(relevantTrips.map { $0.tripId })
         let relevantStopTimes = stopTimes.filter { st in
-            st.stopId == stopId && relevantTrips.contains { $0.tripId == st.tripId }
+            st.stopId == stopId && relevantTripIds.contains(st.tripId)
         }
-
-        // Convert reference time to minutes since midnight
-        let refComponents = pacificCalendar.dateComponents([.hour, .minute], from: refDate)
-        let refMinutes = (refComponents.hour ?? 0) * 60 + (refComponents.minute ?? 0)
 
         // Parse departure times and filter for times after reference time
         var departures: [(time: String, minutes: Int, tripId: String, departureDate: Date)] = []
 
-        // Process today's departures
+        // Process target date's departures
         for st in relevantStopTimes {
             let timeComponents = st.departureTime.split(separator: ":")
             guard timeComponents.count == 3,
@@ -3109,60 +3129,76 @@ actor GTFSService {
                   let minutes = Int(timeComponents[1]) else { continue }
 
             var totalMinutes = hours * 60 + minutes
-            var departureDate = today
+            var departureDate = targetDate
 
             // Handle times >= 24:00:00 (next day)
             if hours >= 24 {
                 totalMinutes = (hours - 24) * 60 + minutes
-                guard let nextDay = pacificCalendar.date(byAdding: .day, value: 1, to: today) else {
+                guard let nextDay = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) else {
                     continue
                 }
                 departureDate = nextDay
             }
 
-            // Only include departures after reference time (same day)
-            if totalMinutes >= refMinutes {
-                let minutesUntil = totalMinutes - refMinutes
-                departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
+            // Calculate minutes until departure from NOW (not refMinutes)
+            // If we're looking at tomorrow's schedule, add 24 hours to account for the day difference
+            var minutesUntil: Int
+            if isNextDay {
+                // Tomorrow's train: minutes from now = (24*60 - nowMinutes) + totalMinutes
+                minutesUntil = (24 * 60 - nowMinutes) + totalMinutes
+            } else {
+                // Today's train: only include if after reference time
+                if totalMinutes >= refMinutes {
+                    minutesUntil = totalMinutes - nowMinutes
+                } else {
+                    continue
+                }
             }
+
+            departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
         }
 
-        // Also add tomorrow's early morning trains (before 3 AM) to ensure we show after-midnight departures
-        if let tomorrow = pacificCalendar.date(byAdding: .day, value: 1, to: today) {
-            let tomorrowStr = dateFormatter.string(from: tomorrow)
-            let tomorrowWeekday = pacificCalendar.component(.weekday, from: tomorrow)
-            let tomorrowServices = getActiveServices(dateStr: tomorrowStr, weekday: tomorrowWeekday)
+        // Also add tomorrow's early morning trains if we're currently looking at TODAY's schedule
+        // (to catch after-midnight service)
+        if !isNextDay {
+            if let tomorrow = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) {
+                let tomorrowStr = dateFormatter.string(from: tomorrow)
+                let tomorrowWeekday = pacificCalendar.component(.weekday, from: tomorrow)
+                let tomorrowServices = getActiveServices(dateStr: tomorrowStr, weekday: tomorrowWeekday)
 
-            let tomorrowTrips = trips.filter { trip in
-                trip.directionId == direction && tomorrowServices.contains(trip.serviceId)
-            }
+                let tomorrowTrips = trips.filter { trip in
+                    trip.directionId == direction && tomorrowServices.contains(trip.serviceId)
+                }
 
-            let tomorrowStopTimes = stopTimes.filter { st in
-                st.stopId == stopId && tomorrowTrips.contains { $0.tripId == st.tripId }
-            }
+                let tomorrowTripIds = Set(tomorrowTrips.map { $0.tripId })
+                let tomorrowStopTimes = stopTimes.filter { st in
+                    st.stopId == stopId && tomorrowTripIds.contains(st.tripId)
+                }
 
-            // Add early morning trains from tomorrow (before 5 AM to catch all after-midnight service)
-            for st in tomorrowStopTimes {
-                let timeComponents = st.departureTime.split(separator: ":")
-                guard timeComponents.count == 3,
-                      let hours = Int(timeComponents[0]),
-                      let minutes = Int(timeComponents[1]) else { continue }
+                // Add early morning trains from tomorrow (before 5 AM to catch all after-midnight service)
+                for st in tomorrowStopTimes {
+                    let timeComponents = st.departureTime.split(separator: ":")
+                    guard timeComponents.count == 3,
+                          let hours = Int(timeComponents[0]),
+                          let minutes = Int(timeComponents[1]) else { continue }
 
-                // Include trains before 5 AM (both regular time and GTFS 24+ format)
-                let isEarlyMorning = (hours < 5) || (hours >= 24 && hours < 29)
-                guard isEarlyMorning else { continue }
+                    // Include trains before 5 AM (both regular time and GTFS 24+ format)
+                    let isEarlyMorning = (hours < 5) || (hours >= 24 && hours < 29)
+                    guard isEarlyMorning else { continue }
 
-                // Handle both regular and GTFS 24+ time format
-                let actualHours = hours >= 24 ? hours - 24 : hours
-                let totalMinutes = actualHours * 60 + minutes
-                let minutesUntilFromNow = (24 * 60 - refMinutes) + totalMinutes // Minutes from now until tomorrow's train
-                departures.append((st.departureTime, minutesUntilFromNow, st.tripId, tomorrow))
+                    // Handle both regular and GTFS 24+ time format
+                    let actualHours = hours >= 24 ? hours - 24 : hours
+                    let totalMinutes = actualHours * 60 + minutes
+                    let minutesUntilFromNow = (24 * 60 - nowMinutes) + totalMinutes // Minutes from now until tomorrow's train
+                    departures.append((st.departureTime, minutesUntilFromNow, st.tripId, tomorrow))
+                }
             }
         }
 
         // Sort by minutes until departure and take first N
         departures.sort { $0.minutes < $1.minutes }
-        let topDepartures = departures.prefix(count)
+        let topDepartures = Array(departures.prefix(count))
+        departures.removeAll() // Free memory immediately
 
         // Convert to Departure objects (using 'now' from above)
         return topDepartures.map { dep in
