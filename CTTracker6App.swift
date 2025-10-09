@@ -3700,14 +3700,17 @@ struct TicketmasterService {
         guard var comps = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json") else {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
         }
+
+        // Use lat/lon centered on Bay Area (Redwood City) with large radius to cover entire region
+        // This ensures we get events from San Jose, SF, Oakland, etc.
         comps.queryItems = [
             .init(name: "apikey", value: apiKey),
-            .init(name: "city", value: city),
-            .init(name: "radius", value: radius),
+            .init(name: "latlong", value: "37.4852,-122.2364"),  // Redwood City (center of Caltrain)
+            .init(name: "radius", value: "50"),  // 50 miles covers SF to San Jose
             .init(name: "unit", value: "miles"),
             .init(name: "startDateTime", value: startDateTime),
             .init(name: "endDateTime", value: endDateTime),
-            .init(name: "size", value: "100"),
+            .init(name: "size", value: "200"),  // Increased to get more events
             .init(name: "sort", value: "date,asc")
         ]
 
