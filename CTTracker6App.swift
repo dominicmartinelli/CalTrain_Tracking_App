@@ -890,39 +890,56 @@ struct SettingsScreen: View {
         let northStopCode = UserDefaults.standard.string(forKey: "northboundStopCode") ?? "70262" // Mountain View
         let southStopCode = UserDefaults.standard.string(forKey: "southboundStopCode") ?? "70011" // 22nd St
 
-        // Add test data for some common trains
-        let testTrains = ["193", "197", "217", "221", "319", "323"]
+        // Get current hour to match test data with current time
         let calendar = Calendar.current
         let now = Date()
+        let currentHour = calendar.component(.hour, from: now)
+        let currentWeekday = calendar.component(.weekday, from: now)
+
+        print("🧪 Creating test delay data for current time: hour \(currentHour), weekday \(currentWeekday)")
+        print("🧪 Stations: North=\(northStopCode), South=\(southStopCode)")
+
+        // Add test data for common trains - use actual train numbers from GTFS
+        let testTrains = ["167", "169", "193", "197", "217", "221"]
+        var totalRecords = 0
 
         for trainNumber in testTrains {
-            // Add 10-15 delay records for each train to get "High" confidence
+            // Add 12 delay records for each train to get "High" confidence
             for i in 0..<12 {
-                // Vary the days (last 2 weeks)
-                let daysAgo = Double.random(in: 0..<14)
-                let recordDate = calendar.date(byAdding: .day, value: -Int(daysAgo), to: now) ?? now
+                // Create records from past weeks, same weekday and hour as now
+                let weeksAgo = Int.random(in: 0..<4)
+                let daysAgo = weeksAgo * 7
+                guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
 
-                // Set time around evening commute (5-7 PM)
+                // Use current hour ±1 hour to match prediction logic
                 var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
-                components.hour = Int.random(in: 17...19)
+                components.hour = currentHour + Int.random(in: -1...1)
                 components.minute = Int.random(in: 0...59)
-                let scheduledTime = calendar.date(from: components) ?? now
+                guard let scheduledTime = calendar.date(from: components) else { continue }
 
-                // Simulate realistic delays: usually 3-7 minutes late, occasionally early
-                let delay = Int.random(in: 2...8) // Mostly late trains
+                // Simulate realistic delays: 3-7 minutes late
+                let delay = Int.random(in: 3...7)
 
-                // Record for both northbound and southbound
+                // Alternate between north and south stops
+                let stopCode = i.isMultiple(of: 2) ? northStopCode : southStopCode
+
                 DelayPredictor.shared.recordDelay(
                     trainNumber: trainNumber,
-                    stopCode: i.isMultiple(of: 2) ? northStopCode : southStopCode,
+                    stopCode: stopCode,
                     scheduledTime: scheduledTime,
                     actualDelay: delay
                 )
+                totalRecords += 1
             }
         }
 
-        print("✅ Added test delay data for trains: \(testTrains.joined(separator: ", "))")
-        print("📊 You should now see delay predictions on the Trains screen!")
+        print("✅ Added \(totalRecords) test delay records for trains: \(testTrains.joined(separator: ", "))")
+        print("📊 Go to Trains screen and look for these train numbers!")
+        print("🔔 You should see orange 'Usually X min late' indicators")
+
+        // Show success message to user
+        statusTicketmaster = "Added \(totalRecords) test delay records"
+        statusTicketmasterColor = .green
     }
     #endif
 }
@@ -2243,9 +2260,14 @@ class DelayPredictor {
     func predictDelay(trainNumber: String, stopCode: String, scheduledTime: Date) -> (averageDelay: Int, confidence: String)? {
         let records = loadRecords()
 
+        debugLog("📊 Predicting delay for train \(trainNumber) at stop \(stopCode)")
+        debugLog("📊 Total delay records in database: \(records.count)")
+
         let calendar = Calendar.current
         let dayOfWeek = calendar.component(.weekday, from: scheduledTime)
         let hourOfDay = calendar.component(.hour, from: scheduledTime)
+
+        debugLog("📊 Looking for: weekday=\(dayOfWeek), hour=\(hourOfDay)±1")
 
         // Filter to similar trains (same train number, day of week, and hour)
         let similarRecords = records.filter {
@@ -2255,7 +2277,12 @@ class DelayPredictor {
             abs($0.hourOfDay - hourOfDay) <= 1 // Within 1 hour
         }
 
-        guard !similarRecords.isEmpty else { return nil }
+        debugLog("📊 Found \(similarRecords.count) matching records for train \(trainNumber)")
+
+        guard !similarRecords.isEmpty else {
+            debugLog("📊 No prediction available - need more delay history")
+            return nil
+        }
 
         // Calculate average delay
         let totalDelay = similarRecords.reduce(0) { $0 + $1.actualDelay }
@@ -2270,6 +2297,8 @@ class DelayPredictor {
         } else {
             confidence = "Low"
         }
+
+        debugLog("📊 Prediction: \(averageDelay) min delay (confidence: \(confidence), samples: \(similarRecords.count))")
 
         return (averageDelay: averageDelay, confidence: confidence)
     }
