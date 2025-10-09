@@ -1622,7 +1622,11 @@ struct EventsScreen: View {
                 return withinRange
             }
             debugLog("🎟️ After distance filter: \(filtered.count) events")
-            return filtered
+
+            // Deduplicate: only show one event per venue if same name
+            let deduplicated = deduplicateEvents(filtered)
+            debugLog("🎟️ After deduplication: \(deduplicated.count) events")
+            return deduplicated
         }
 
         let filtered = largeEvents.filter { event in
@@ -1630,7 +1634,27 @@ struct EventsScreen: View {
             return nearest.station.name == selectedStation && nearest.distance <= maxDistance
         }
         debugLog("🎟️ After station filter: \(filtered.count) events")
-        return filtered
+
+        // Deduplicate: only show one event per venue if same name
+        let deduplicated = deduplicateEvents(filtered)
+        debugLog("🎟️ After deduplication: \(deduplicated.count) events")
+        return deduplicated
+    }
+
+    // Deduplicate events: keep only one per (name, venue) combination
+    private func deduplicateEvents(_ events: [BayAreaEvent]) -> [BayAreaEvent] {
+        var seen = Set<String>()
+        var unique: [BayAreaEvent] = []
+
+        for event in events {
+            let key = "\(event.name)|\(event.venueName ?? "")"
+            if !seen.contains(key) {
+                seen.insert(key)
+                unique.append(event)
+            }
+        }
+
+        return unique
     }
 
     var body: some View {
