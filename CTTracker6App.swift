@@ -3140,19 +3140,19 @@ actor GTFSService {
                 departureDate = nextDay
             }
 
-            // Calculate minutes until departure from NOW (not refMinutes)
-            // If we're looking at tomorrow's schedule, add 24 hours to account for the day difference
+            // Filter by selected time (refMinutes) regardless of which day
+            if totalMinutes < refMinutes {
+                continue // Skip trains before selected time
+            }
+
+            // Calculate minutes until departure from NOW
             var minutesUntil: Int
             if isNextDay {
                 // Tomorrow's train: minutes from now = (24*60 - nowMinutes) + totalMinutes
                 minutesUntil = (24 * 60 - nowMinutes) + totalMinutes
             } else {
-                // Today's train: only include if after reference time
-                if totalMinutes >= refMinutes {
-                    minutesUntil = totalMinutes - nowMinutes
-                } else {
-                    continue
-                }
+                // Today's train
+                minutesUntil = totalMinutes - nowMinutes
             }
 
             departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
