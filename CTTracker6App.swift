@@ -299,12 +299,14 @@ struct RootView: View {
             // Get northbound and southbound departures
             let northDeps = try await SIRIService.nextDepartures(
                 from: northboundStopCode,
+                to: southboundStopCode,
                 at: Date(),
                 apiKey: key,
                 expectedDirection: "N"
             )
             let southDeps = try await SIRIService.nextDepartures(
                 from: southboundStopCode,
+                to: northboundStopCode,
                 at: Date(),
                 apiKey: key,
                 expectedDirection: "S"
@@ -1365,8 +1367,8 @@ struct TrainsScreen: View {
             async let sbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: southboundStopCode, direction: 1, refDate: refDate, count: 3)
 
             // Load SIRI real-time data for service types and delays
-            async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
-            async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
+            async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, to: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
+            async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, to: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
 
             let (nScheduled, sScheduled, nRealtime, sRealtime) = try await (nbScheduled, sbScheduled, nbRealtime, sbRealtime)
 
@@ -1427,64 +1429,34 @@ struct TrainsScreen: View {
     // Merge GTFS scheduled times with SIRI real-time service types
     private func mergeScheduledWithRealtime(scheduled: [Departure], realtime: [Departure]) -> [Departure] {
         debugLog("🔀 Merging \(scheduled.count) scheduled with \(realtime.count) realtime departures")
-        var result = scheduled
 
-        // Match scheduled trains with real-time data by approximate departure time
-        for (index, scheduledDep) in result.enumerated() {
-            guard let scheduledTime = scheduledDep.depTime else {
-                debugLog("  ⏭️ Skipping scheduled #\(index) - no depTime")
-                continue
-            }
+        // If we have realtime data, prefer it over scheduled data
+        // Only use scheduled data to fill in gaps
+        if !realtime.isEmpty {
+            var result = realtime
 
-            debugLog("  🔍 Looking for realtime match for scheduled at \(scheduledTime.formatted(date: .omitted, time: .shortened))")
+            // Add any scheduled trains that don't have realtime matches
+            for scheduledDep in scheduled {
+                guard let scheduledTime = scheduledDep.depTime else { continue }
 
-            // Find matching real-time departure (within 2 minutes)
-            if let matchingRealtime = realtime.first(where: { realtimeDep in
-                guard let realtimeTime = realtimeDep.depTime else { return false }
-                let diff = abs(scheduledTime.timeIntervalSince(realtimeTime))
-                debugLog("    Comparing with realtime at \(realtimeTime.formatted(date: .omitted, time: .shortened)) - diff: \(Int(diff))s")
-                return diff < 120 // 2 minutes tolerance
-            }) {
-                debugLog("🔍 Matched realtime for \(scheduledDep.destination ?? "unknown") - trainNumber: '\(matchingRealtime.trainNumber ?? "nil")'")
-                // Calculate delay (in minutes)
-                if let realtimeTime = matchingRealtime.depTime,
-                   let trainNum = matchingRealtime.trainNumber ?? scheduledDep.trainNumber,
-                   !trainNum.isEmpty {
-                    let delaySeconds = realtimeTime.timeIntervalSince(scheduledTime)
-                    let delayMinutes = Int(delaySeconds / 60)
-
-                    // Only record significant delays (≥1 minute difference)
-                    if abs(delayMinutes) >= 1 {
-                        // Record delay for prediction engine
-                        // Use northbound or southbound stop code based on direction
-                        let stopCode = scheduledDep.direction == "N" ? northboundStopCode : southboundStopCode
-                        DelayPredictor.shared.recordDelay(
-                            trainNumber: trainNum,
-                            stopCode: stopCode,
-                            scheduledTime: scheduledTime,
-                            actualDelay: delayMinutes
-                        )
-                    }
+                let hasMatch = realtime.contains { realtimeDep in
+                    guard let realtimeTime = realtimeDep.depTime else { return false }
+                    let diff = abs(scheduledTime.timeIntervalSince(realtimeTime))
+                    return diff < 120 // 2 minutes tolerance
                 }
 
-                // Update with real-time data (train number, actual departure time, and minutes)
-                // Always update if we have a matching realtime departure
-                let actualDepTime = matchingRealtime.depTime ?? scheduledDep.depTime
-                let actualMinutes = matchingRealtime.minutes
-                let trainNum = matchingRealtime.trainNumber ?? scheduledDep.trainNumber
-
-                result[index] = Departure(
-                    journeyRef: scheduledDep.journeyRef,
-                    minutes: actualMinutes,
-                    depTime: actualDepTime,
-                    direction: scheduledDep.direction,
-                    destination: scheduledDep.destination,
-                    trainNumber: trainNum
-                )
+                if !hasMatch {
+                    debugLog("  📅 Adding scheduled train at \(scheduledTime.formatted(date: .omitted, time: .shortened)) - no realtime match")
+                    result.append(scheduledDep)
+                }
             }
+
+            // Sort by departure time and take first 3
+            return Array(result.sorted { ($0.depTime ?? .distantFuture) < ($1.depTime ?? .distantFuture) }.prefix(3))
         }
 
-        return result
+        // If no realtime data, just return scheduled
+        return scheduled
     }
 }
 
@@ -1542,10 +1514,28 @@ struct DepartureRow: View {
         return result
     }
 
+    var arrivalTime: Date? {
+        // Use arrival time from the Departure object if available
+        return dep.arrivalTime
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "—").font(.headline)
+                // Departure → Arrival time
+                HStack(spacing: 4) {
+                    Text(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "—")
+                        .font(.headline)
+                    if let arrival = arrivalTime {
+                        Text("→")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text(arrival.formatted(date: .omitted, time: .shortened))
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 HStack(spacing: 4) {
                     Text(destinationLabel).font(.subheadline).foregroundStyle(.secondary)
                     if let serviceType = dep.trainNumber, !serviceType.isEmpty {
@@ -2345,6 +2335,7 @@ struct Departure: Identifiable, Hashable {
     let direction: String?
     let destination: String?
     let trainNumber: String?
+    let arrivalTime: Date?
 }
 
 struct ServiceAlert: Identifiable, Hashable {
@@ -3641,7 +3632,8 @@ actor GTFSService {
                 depTime: depDate,
                 direction: direction == 0 ? "North" : "South",
                 destination: destination,
-                trainNumber: nil // Will be filled with service type from SIRI if available
+                trainNumber: nil, // Will be filled with service type from SIRI if available
+                arrivalTime: nil // Will be filled from SIRI OnwardCalls if available
             )
         }
     }
@@ -3810,9 +3802,10 @@ struct MonitoredVehicleJourneyNode: Decodable {
     let FramedVehicleJourneyRef: FramedVehicleJourneyRefNode?
     let PublishedLineName: String?
     let VehicleRef: String?
+    let OnwardCalls: [OnwardCallNode]?
 
     enum CodingKeys: String, CodingKey {
-        case LineRef, DirectionRef, DestinationName, MonitoredCall, FramedVehicleJourneyRef, PublishedLineName, VehicleRef
+        case LineRef, DirectionRef, DestinationName, MonitoredCall, FramedVehicleJourneyRef, PublishedLineName, VehicleRef, OnwardCalls
     }
 
     init(from decoder: any Decoder) throws {
@@ -3823,6 +3816,7 @@ struct MonitoredVehicleJourneyNode: Decodable {
         self.FramedVehicleJourneyRef = try? c.decodeIfPresent(FramedVehicleJourneyRefNode.self, forKey: .FramedVehicleJourneyRef)
         self.PublishedLineName = try? c.decodeIfPresent(String.self, forKey: .PublishedLineName)
         self.VehicleRef = try? c.decodeIfPresent(String.self, forKey: .VehicleRef)
+        self.OnwardCalls = try? c.decodeIfPresent([OnwardCallNode].self, forKey: .OnwardCalls)
 
         if let s = try? c.decodeIfPresent(String.self, forKey: .DestinationName) {
             self.DestinationName = s
@@ -3835,7 +3829,15 @@ struct MonitoredVehicleJourneyNode: Decodable {
 }
 
 struct FramedVehicleJourneyRefNode: Decodable { let DatedVehicleJourneyRef: String? }
-struct MonitoredCallNode: Decodable { let AimedDepartureTime: String? }
+struct MonitoredCallNode: Decodable {
+    let AimedDepartureTime: String?
+}
+
+struct OnwardCallNode: Decodable {
+    let StopPointRef: String?
+    let AimedArrivalTime: String?
+    let AimedDepartureTime: String?
+}
 
 // MARK: - SIRI-SX Service Alerts models
 struct AlertsEnvelope: Decodable {
@@ -3993,14 +3995,14 @@ struct SIRIService {
         }
     }
 
-    static func nextDepartures(from stop: String, at refDate: Date, apiKey: String, expectedDirection: String? = nil) async throws -> [Departure] {
+    static func nextDepartures(from stop: String, to destinationStop: String? = nil, at refDate: Date, apiKey: String, expectedDirection: String? = nil) async throws -> [Departure] {
         let visits = try await stopMonitoring(stopCode: stop, apiKey: apiKey)
         let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let df = ISO8601DateFormatter()
         let now = refDate // Use the selected time from the picker
 
         var out: [Departure] = []
-        print("📍 Stop: \(stop), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
+        print("📍 Stop: \(stop), Destination: \(destinationStop ?? "any"), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
         for v in visits {
             let mvj = v.MonitoredVehicleJourney
             let aimed = mvj.MonitoredCall?.AimedDepartureTime
@@ -4027,11 +4029,30 @@ struct SIRIService {
             let trainNumber = mvj.VehicleRef // Use VehicleRef instead of LineRef for actual train number
             print("  🚂 Creating departure with trainNumber: '\(trainNumber ?? "nil")'")
 
+            // Extract arrival time from OnwardCalls if destination stop is specified
+            var arrivalTime: Date? = nil
+            if let destStop = destinationStop {
+                if let onwardCalls = mvj.OnwardCalls {
+                    print("     🔍 Searching \(onwardCalls.count) onward calls for stop \(destStop)")
+                    for call in onwardCalls {
+                        print("        Stop: \(call.StopPointRef ?? "nil"), Arrival: \(call.AimedArrivalTime ?? "nil")")
+                        if call.StopPointRef == destStop, let arrivalTimeStr = call.AimedArrivalTime {
+                            arrivalTime = dfFrac.date(from: arrivalTimeStr) ?? df.date(from: arrivalTimeStr)
+                            print("     ✅ Found arrival time: \(arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
+                            break
+                        }
+                    }
+                } else {
+                    print("     ⚠️ No OnwardCalls in API response - API may need MaximumNumberOfCallsOnwards parameter")
+                }
+            }
+
             let dep = Departure(
                 journeyRef: journeyRef,
                 minutes: minutes, depTime: date,
                 direction: mvj.DirectionRef, destination: mvj.DestinationName,
-                trainNumber: trainNumber
+                trainNumber: trainNumber,
+                arrivalTime: arrivalTime
             )
             // Only include future departures (at least 1 minute away)
             if minutes > 0 { out.append(dep) }
