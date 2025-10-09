@@ -1641,16 +1641,49 @@ struct EventsScreen: View {
         return deduplicated
     }
 
-    // Deduplicate events: keep only one per (name, venue) combination
+    // Deduplicate events: keep only one per (base name, venue, date) combination
     private func deduplicateEvents(_ events: [BayAreaEvent]) -> [BayAreaEvent] {
         var seen = Set<String>()
         var unique: [BayAreaEvent] = []
 
         for event in events {
-            let key = "\(event.name)|\(event.venueName ?? "")"
+            // Extract base event name by removing ticket package prefixes/suffixes
+            var baseName = event.name
+
+            // Remove common ticket package prefixes (case insensitive)
+            let prefixPatterns = ["SEC\\. \\d+\\s+", "SECTION \\d+\\s+", "MODELO CANTINA PASS -\\s*", "POSTGAME PASS -\\s*", "VIP PASS -\\s*", "PREMIUM PASS -\\s*", "CLUB PASS -\\s*"]
+            for pattern in prefixPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                    let range = NSRange(baseName.startIndex..., in: baseName)
+                    baseName = regex.stringByReplacingMatches(in: baseName, range: range, withTemplate: "")
+                }
+            }
+
+            // Remove common ticket package suffixes
+            let suffixPatterns = ["\\s*-\\s*SEC\\. \\d+.*", "\\s*-\\s*SECTION \\d+.*", "\\s*\\(.*PASS.*\\)", "\\s*-\\s*VIP", "\\s*-\\s*PREMIUM"]
+            for pattern in suffixPatterns {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                    let range = NSRange(baseName.startIndex..., in: baseName)
+                    baseName = regex.stringByReplacingMatches(in: baseName, range: range, withTemplate: "")
+                }
+            }
+
+            baseName = baseName.trimmingCharacters(in: .whitespaces)
+
+            // Create key from base name, venue, and date (ignoring time)
+            var dateKey = ""
+            if let date = event.date {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                dateKey = formatter.string(from: date)
+            }
+
+            let key = "\(baseName)|\(event.venueName ?? "")|\(dateKey)"
             if !seen.contains(key) {
                 seen.insert(key)
                 unique.append(event)
+            } else {
+                debugLog("🎟️ Duplicate filtered: '\(event.name)' (base: '\(baseName)')")
             }
         }
 
