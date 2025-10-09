@@ -800,6 +800,23 @@ struct SettingsScreen: View {
                         }
                     }
                 }
+
+                #if DEBUG
+                Section {
+                    Button("Add Test Delay Data") {
+                        addTestDelayData()
+                    }
+                    Button("Clear Delay Data") {
+                        UserDefaults.standard.removeObject(forKey: "delayHistory")
+                    }
+                    .foregroundStyle(.red)
+                } header: {
+                    Text("Debug")
+                } footer: {
+                    Text("Populate fake delay data to test delay predictions")
+                        .font(.caption2)
+                }
+                #endif
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -866,6 +883,48 @@ struct SettingsScreen: View {
             debugLog("🔑 Ticketmaster verify - EMPTY")
         }
     }
+
+    #if DEBUG
+    private func addTestDelayData() {
+        // Get the current station codes
+        let northStopCode = UserDefaults.standard.string(forKey: "northboundStopCode") ?? "70262" // Mountain View
+        let southStopCode = UserDefaults.standard.string(forKey: "southboundStopCode") ?? "70011" // 22nd St
+
+        // Add test data for some common trains
+        let testTrains = ["193", "197", "217", "221", "319", "323"]
+        let calendar = Calendar.current
+        let now = Date()
+
+        for trainNumber in testTrains {
+            // Add 10-15 delay records for each train to get "High" confidence
+            for i in 0..<12 {
+                // Vary the days (last 2 weeks)
+                let daysAgo = Double.random(in: 0..<14)
+                let recordDate = calendar.date(byAdding: .day, value: -Int(daysAgo), to: now) ?? now
+
+                // Set time around evening commute (5-7 PM)
+                var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
+                components.hour = Int.random(in: 17...19)
+                components.minute = Int.random(in: 0...59)
+                let scheduledTime = calendar.date(from: components) ?? now
+
+                // Simulate realistic delays: usually 3-7 minutes late, occasionally early
+                let delay = Int.random(in: 2...8) // Mostly late trains
+
+                // Record for both northbound and southbound
+                DelayPredictor.shared.recordDelay(
+                    trainNumber: trainNumber,
+                    stopCode: i.isMultiple(of: 2) ? northStopCode : southStopCode,
+                    scheduledTime: scheduledTime,
+                    actualDelay: delay
+                )
+            }
+        }
+
+        print("✅ Added test delay data for trains: \(testTrains.joined(separator: ", "))")
+        print("📊 You should now see delay predictions on the Trains screen!")
+    }
+    #endif
 }
 
 // MARK: - Theme Selection Screen
