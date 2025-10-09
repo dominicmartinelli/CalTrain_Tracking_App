@@ -1233,14 +1233,14 @@ struct TrainsScreen: View {
             // Load SIRI real-time data for service types and delays
             async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
             async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
-            async let al = SIRIService.serviceAlerts(apiKey: key)
 
-            let (nScheduled, sScheduled, nRealtime, sRealtime, a) = try await (nbScheduled, sbScheduled, nbRealtime, sbRealtime, al)
+            let (nScheduled, sScheduled, nRealtime, sRealtime) = try await (nbScheduled, sbScheduled, nbRealtime, sbRealtime)
 
             // Merge GTFS scheduled times with SIRI real-time service types
             north = mergeScheduledWithRealtime(scheduled: nScheduled, realtime: nRealtime)
             south = mergeScheduledWithRealtime(scheduled: sScheduled, realtime: sRealtime)
-            sharedAlerts = a
+
+            // Don't fetch alerts here - use shared alerts from main app to avoid duplicate API calls
 
             // Record usage history for pattern learning
             CommuteHistoryStorage.shared.recordCheck(
