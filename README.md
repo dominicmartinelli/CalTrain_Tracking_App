@@ -11,18 +11,24 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 
 ### 🚂 Train Tracking
 - **Complete Caltrain schedule** using GTFS static data - shows all scheduled trains
-- **Real-time enhancements** from 511.org SIRI API (service types, delays)
+- **Real-time enhancements** from 511.org SIRI API (train numbers, service types, delays)
+- **Arrival times** - displays both departure and arrival times (e.g., "8:16 PM → 8:45 PM")
+  - Calculated from GTFS schedule data for accurate end-to-end trip times
+  - Shows expected arrival at your destination station
+- **Train numbers** - displays actual train numbers in parentheses (e.g., "(163)")
+  - Extracted from SIRI API VehicleRef field for real-time accuracy
 - **Full schedule view** - tap section headers to view up to 50 upcoming departures in either direction
 - **Delay predictions** - machine learning-based predictions showing if trains are usually late/early
   - Predicts delays based on historical patterns (train number, day of week, hour)
   - Shows confidence level (High/Medium/Low) based on sample size
   - Orange indicator for late predictions, green for early
   - Automatically learns from real-time data
+  - Dedicated Alerts tab shows all predicted delays with notifications
 - Track trains between any two Caltrain stations
 - Shows next 3 departures for both northbound and southbound directions
 - Displays departure times, service types (Local, Limited, etc.), and countdown in minutes
 - **Time picker** to check departures at any future time - shows full schedule, not just real-time trains
-  - Smart date detection: selecting a past time automatically assumes you mean tomorrow
+  - Smart date detection: selecting a past time (>5 min ago) automatically assumes you mean tomorrow
 - **Weather at destination** - see current conditions and temperature in section headers (via Open-Meteo API)
 - **"I took this train" button** - tap checkmark to log trips for CO₂ tracking and achievements
 - Service alerts displayed when active and highlighted at top of screen
@@ -39,11 +45,16 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Covers concerts, sports (including Warriors and Giants games), theater, and more
 - Perfect for planning weekend trips or finding events near your commute
 
-### 🚨 Service Alerts
+### 🚨 Service Alerts & Delay Predictions
 - Dedicated alerts tab with visual status indicator
+- **Delay prediction alerts** - shows trains with predicted delays
+  - Lists all upcoming trains expected to be delayed
+  - Displays average delay, confidence level, and route information
+  - Push notifications for trains with delay predictions
+  - "Alright Alright Alright" message when no alerts or predictions
+- **Service alerts** - real-time Caltrain service disruption notifications
 - Checkmark icon when no alerts (with "Alright Alright Alright" message)
 - Warning triangle icon with badge count when alerts are active
-- Real-time Caltrain service disruption notifications
 - Alerts automatically load on app start and display on Trains screen when present
 
 ### 📍 Station Selection
@@ -90,6 +101,10 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Smart notification toggle (appears first for easy access)
 - Secure API key management for 511.org and Ticketmaster
 - All credentials stored in iOS Keychain
+- **Debug tools** (DEBUG builds only):
+  - Clear delay prediction data
+  - Add test delay data for all trains (8,484 records)
+  - Test data covers current hour ±3 hours for realistic testing
 - About page with data attribution and compliance info
 
 ## Setup
@@ -177,21 +192,30 @@ All Caltrain stations are supported:
   - Calculates actual minutes until departure from current time
   - 24-hour cache with automatic refresh
 - **SIRI API integration** for real-time enhancements
+  - Extracts train numbers from VehicleRef field for accurate identification
   - Overlays real-time service types (Local, Limited, etc.) on scheduled trains
   - Provides service alerts and delay information
-  - Merges SIRI real-time data with GTFS scheduled data for best of both worlds
+  - Smart merge strategy: prefers real-time data over scheduled data for accuracy
+  - Calculates arrival times from GTFS when OnwardCalls unavailable
+- **Arrival Time Calculation**
+  - Matches departure time to GTFS trip (within 2 minutes)
+  - Finds arrival time at destination stop from schedule
+  - Displays full journey time (e.g., "8:16 PM → 8:45 PM")
+  - Fallback when SIRI OnwardCalls not supported by API
 - **Delay Prediction Engine**
   - Machine learning-based delay predictions using historical data
   - Stores delay records locally in UserDefaults (JSON encoded)
   - Each record contains: train number, stop code, scheduled time, actual delay, day of week, hour
   - Pattern matching algorithm filters by train number, stop code, day of week, and hour (±1 hour tolerance)
   - Confidence levels based on sample size: High (≥10), Medium (≥5), Low (<5)
-  - Automatic cleanup: keeps only most recent 500 records (optimized for memory)
+  - Automatic cleanup: keeps only most recent 500 records (20,000 in DEBUG mode)
   - Privacy-first: all data stored locally on device, never uploaded
   - Automatically learns from real-time data by recording delays when GTFS and SIRI data diverge
+  - Displays predicted delays in dedicated Alerts tab with push notifications
 - **Security Features**
-  - Thread-safe Keychain access with concurrent DispatchQueue
+  - Thread-safe Keychain access with concurrent DispatchQueue (sync writes to prevent race conditions)
   - API rate limiting (5 seconds between requests to same endpoint)
+  - Smart rate limit handling: 15s initial delay + 5s between calls to avoid 429 errors
   - Network retry logic with exponential backoff (1s, 2s, 4s)
   - Sanitized error messages (no server response leaks)
   - ZIP path traversal and ZIP bomb protection
