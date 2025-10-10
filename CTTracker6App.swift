@@ -292,8 +292,8 @@ struct RootView: View {
             return
         }
 
-        // Wait 5 seconds to avoid rate limit (Trains screen just loaded)
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        // Wait 10 seconds to avoid rate limit (Trains screen just loaded)
+        try? await Task.sleep(nanoseconds: 10_000_000_000)
 
         do {
             // Get northbound and southbound departures
@@ -1420,13 +1420,71 @@ struct TrainsScreen: View {
             north = mergeScheduledWithRealtime(scheduled: nScheduled, realtime: nRealtime)
             south = mergeScheduledWithRealtime(scheduled: sScheduled, realtime: sRealtime)
 
+            // Calculate arrival times using GTFS for departures that don't have them
+            debugLog("🕐 Calculating arrival times from GTFS...")
+            var northWithArrival: [Departure] = []
+            for dep in north {
+                if dep.arrivalTime == nil, let depTime = dep.depTime {
+                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
+                        fromStop: northboundStopCode,
+                        toStop: southboundStopCode,
+                        departureTime: depTime,
+                        direction: 0
+                    ) {
+                        debugLog("  ✅ NB: Calculated arrival at \(arrivalTime.formatted(date: .omitted, time: .shortened))")
+                        northWithArrival.append(Departure(
+                            journeyRef: dep.journeyRef,
+                            minutes: dep.minutes,
+                            depTime: dep.depTime,
+                            direction: dep.direction,
+                            destination: dep.destination,
+                            trainNumber: dep.trainNumber,
+                            arrivalTime: arrivalTime
+                        ))
+                    } else {
+                        northWithArrival.append(dep)
+                    }
+                } else {
+                    northWithArrival.append(dep)
+                }
+            }
+            north = northWithArrival
+
+            var southWithArrival: [Departure] = []
+            for dep in south {
+                if dep.arrivalTime == nil, let depTime = dep.depTime {
+                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
+                        fromStop: southboundStopCode,
+                        toStop: northboundStopCode,
+                        departureTime: depTime,
+                        direction: 1
+                    ) {
+                        debugLog("  ✅ SB: Calculated arrival at \(arrivalTime.formatted(date: .omitted, time: .shortened))")
+                        southWithArrival.append(Departure(
+                            journeyRef: dep.journeyRef,
+                            minutes: dep.minutes,
+                            depTime: dep.depTime,
+                            direction: dep.direction,
+                            destination: dep.destination,
+                            trainNumber: dep.trainNumber,
+                            arrivalTime: arrivalTime
+                        ))
+                    } else {
+                        southWithArrival.append(dep)
+                    }
+                } else {
+                    southWithArrival.append(dep)
+                }
+            }
+            south = southWithArrival
+
             debugLog("📋 Merged Northbound departures:")
             for (i, dep) in north.enumerated() {
-                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?")")
+                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
             }
             debugLog("📋 Merged Southbound departures:")
             for (i, dep) in south.enumerated() {
-                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?")")
+                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
             }
 
             // Don't fetch alerts here - use shared alerts from main app to avoid duplicate API calls
@@ -3495,6 +3553,72 @@ actor GTFSService {
         fields.append(currentField.trimmingCharacters(in: .whitespaces))
 
         return fields
+    }
+
+    // Calculate arrival time at destination stop given a departure time from origin
+    func getArrivalTime(fromStop: String, toStop: String, departureTime: Date, direction: Int) async throws -> Date? {
+        try await ensureGTFSLoaded()
+
+        var pacificCalendar = Calendar.current
+        pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+
+        let targetDate = pacificCalendar.startOfDay(for: departureTime)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd"
+        dateFormatter.timeZone = pacificCalendar.timeZone
+        let targetDateStr = dateFormatter.string(from: targetDate)
+        let weekday = pacificCalendar.component(.weekday, from: targetDate)
+
+        // Find active services
+        let activeServices = getActiveServices(dateStr: targetDateStr, weekday: weekday)
+
+        // Find trips for this direction
+        let relevantTrips = trips.filter { trip in
+            trip.directionId == direction && activeServices.contains(trip.serviceId)
+        }
+
+        // Get stop times for origin stop
+        let relevantTripIds = Set(relevantTrips.map { $0.tripId })
+        let originStopTimes = stopTimes.filter { st in
+            st.stopId == fromStop && relevantTripIds.contains(st.tripId)
+        }
+
+        // Find the trip that matches our departure time (within 2 minutes)
+        let depComponents = pacificCalendar.dateComponents([.hour, .minute], from: departureTime)
+        let depMinutes = (depComponents.hour ?? 0) * 60 + (depComponents.minute ?? 0)
+
+        for originST in originStopTimes {
+            let timeComponents = originST.departureTime.split(separator: ":")
+            guard timeComponents.count == 3,
+                  let hours = Int(timeComponents[0]),
+                  let minutes = Int(timeComponents[1]) else { continue }
+
+            let actualHours = hours >= 24 ? hours - 24 : hours
+            let originMinutes = actualHours * 60 + minutes
+
+            // Match within 2 minutes
+            if abs(originMinutes - depMinutes) < 2 {
+                // Found matching trip, now find arrival at destination
+                if let destST = stopTimes.first(where: { $0.tripId == originST.tripId && $0.stopId == toStop }) {
+                    let arrTimeComponents = destST.arrivalTime.split(separator: ":")
+                    guard arrTimeComponents.count == 3,
+                          let arrHours = Int(arrTimeComponents[0]),
+                          let arrMinutes = Int(arrTimeComponents[1]) else { continue }
+
+                    let actualArrHours = arrHours >= 24 ? arrHours - 24 : arrHours
+                    var arrivalDate = targetDate
+                    if arrHours >= 24 {
+                        arrivalDate = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) ?? targetDate
+                    }
+
+                    if let result = pacificCalendar.date(bySettingHour: actualArrHours, minute: arrMinutes, second: 0, of: arrivalDate) {
+                        return result
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 
     // Get scheduled departures for a stop at a given time
