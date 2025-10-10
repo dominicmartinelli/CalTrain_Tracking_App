@@ -828,6 +828,8 @@ struct SettingsScreen: View {
     @State private var status511Color: Color = .secondary
     @State private var statusTicketmasterColor: Color = .secondary
     @StateObject private var notificationManager = SmartNotificationManager.shared
+    @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
+    @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
 
     var body: some View {
         NavigationStack {
@@ -949,10 +951,18 @@ struct SettingsScreen: View {
                 #if DEBUG
                 Section {
                     Button("Add Test Delay Data") {
-                        addTestDelayData()
+                        statusTicketmaster = "Generating test data..."
+                        statusTicketmasterColor = .orange
+                        let northCode = northboundStopCode
+                        let southCode = southboundStopCode
+                        Task.detached {
+                            await addTestDelayData(northStopCode: northCode, southStopCode: southCode)
+                        }
                     }
                     Button("Clear Delay Data") {
                         UserDefaults.standard.removeObject(forKey: "delayHistory")
+                        statusTicketmaster = "Delay data cleared"
+                        statusTicketmasterColor = .green
                     }
                     .foregroundStyle(.red)
                 } header: {
@@ -1030,76 +1040,68 @@ struct SettingsScreen: View {
     }
 
     #if DEBUG
-    private func addTestDelayData() {
-        // Get the current station codes from UserDefaults (same key as @AppStorage)
-        let northStopCode = UserDefaults.standard.string(forKey: "northboundStopCode") ?? CaltrainStops.defaultNorthbound.stopCode
-        let southStopCode = UserDefaults.standard.string(forKey: "southboundStopCode") ?? CaltrainStops.defaultSouthbound.stopCode
+    private func addTestDelayData(northStopCode: String, southStopCode: String) async {
+        print("🧪 Creating test delay data for ALL trains at current hour")
+        print("🧪 North stop: \(northStopCode), South stop: \(southStopCode)")
 
-        // Get current hour to match test data with current time
         let calendar = Calendar.current
         let now = Date()
         let currentHour = calendar.component(.hour, from: now)
         let currentWeekday = calendar.component(.weekday, from: now)
-
-        // Get station names for display
-        let allStations = CaltrainStops.northbound + CaltrainStops.southbound
-        let northStation = allStations.first { $0.stopCode == northStopCode }?.name ?? "Unknown"
-        let southStation = allStations.first { $0.stopCode == southStopCode }?.name ?? "Unknown"
-
-        print("🧪 Creating test delay data for current time: hour \(currentHour), weekday \(currentWeekday)")
-        print("🧪 Stations: North=\(northStation) (\(northStopCode)), South=\(southStation) (\(southStopCode))")
-
-        // In DEBUG mode, add delay predictions for trains currently showing
-        // Use simple approach: just create data for current hour ±3 hours to avoid freezing
         var totalRecords = 0
 
-        // Common Caltrain train numbers (even northbound, odd southbound)
-        let trainNumbers = Array(stride(from: 100, through: 200, by: 1))
+        // Create test data for many train numbers so any train showing will have predictions
+        // Typical Caltrain trains range from 101-199
+        let allTrains = Array(101...199)
 
-        for trainNumber in trainNumbers {
-            let trainNumStr = String(trainNumber)
+        for trainNum in allTrains {
+            let trainNumStr = String(trainNum)
 
-            // Add records for current hour ±3 hours (7 hours total)
-            for hourOffset in -3...3 {
-                let targetHour = (currentHour + hourOffset + 24) % 24
+            // Add records for BOTH stops since we don't know which direction the train is
+            for stopCode in [northStopCode, southStopCode] {
+                // Add 12 historical records for current hour ±1 to get "High" confidence
+                for hourOffset in [-1, 0, 1] {
+                    let targetHour = (currentHour + hourOffset + 24) % 24
 
-                // Add 12 records per hour to get "High" confidence
-                for i in 0..<12 {
-                    // Create records from past weeks, same weekday
-                    let weeksAgo = Int.random(in: 0..<4)
-                    let daysAgo = weeksAgo * 7
-                    guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
+                    for i in 0..<4 {  // 4 records per hour = 12 total per train per stop
+                        // Go back by same weekday (7, 14, 21, 28 days) to maintain weekday match
+                        let daysAgo = (i + 1) * 7
+                        guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
 
-                    // Use the target hour
-                    var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
-                    components.hour = targetHour
-                    components.minute = Int.random(in: 0...59)
-                    guard let scheduledTime = calendar.date(from: components) else { continue }
+                        // Use the target hour with random minute
+                        var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
+                        components.hour = targetHour
+                        components.minute = Int.random(in: 0...59)
+                        guard let scheduledTime = calendar.date(from: components) else { continue }
 
-                    // Simulate realistic delays: 3-7 minutes late
-                    let delay = Int.random(in: 3...7)
+                        // Verify weekday matches (should always be true with 7-day increments)
+                        let recordWeekday = calendar.component(.weekday, from: scheduledTime)
+                        guard recordWeekday == currentWeekday else { continue }
 
-                    // Alternate between north and south stops
-                    let stopCode = i.isMultiple(of: 2) ? northStopCode : southStopCode
+                        // Simulate realistic delays: 3-7 minutes late
+                        let delay = Int.random(in: 3...7)
 
-                    DelayPredictor.shared.recordDelay(
-                        trainNumber: trainNumStr,
-                        stopCode: stopCode,
-                        scheduledTime: scheduledTime,
-                        actualDelay: delay
-                    )
-                    totalRecords += 1
+                        DelayPredictor.shared.recordDelay(
+                            trainNumber: trainNumStr,
+                            stopCode: stopCode,
+                            scheduledTime: scheduledTime,
+                            actualDelay: delay
+                        )
+                        totalRecords += 1
+                    }
                 }
             }
         }
 
-        print("✅ Added \(totalRecords) test delay records for ALL train numbers (100-300)")
-        print("📊 Go to Trains screen - ALL trains will show delay predictions!")
-        print("🔔 You should see orange 'Usually X min late' indicators on every train")
+        print("✅ Added \(totalRecords) test delay records for trains 101-199")
+        print("🧪 Weekday: \(currentWeekday), Hour: \(currentHour)±1, Both stops")
+        print("📊 Go to Alerts tab to see predictions!")
 
         // Show success message to user
-        statusTicketmaster = "Added \(totalRecords) test delay records for all trains"
-        statusTicketmasterColor = .green
+        await MainActor.run {
+            statusTicketmaster = "Added \(totalRecords) test delay records"
+            statusTicketmasterColor = .green
+        }
     }
     #endif
 }
