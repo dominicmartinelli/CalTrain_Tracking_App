@@ -292,11 +292,13 @@ struct RootView: View {
             return
         }
 
-        // Wait 10 seconds to avoid rate limit (Trains screen just loaded)
-        try? await Task.sleep(nanoseconds: 10_000_000_000)
+        // Wait 15 seconds to avoid rate limit (Trains screen just loaded and made 2 API calls)
+        // The HTTPClient enforces 5 seconds between requests to the same endpoint
+        try? await Task.sleep(nanoseconds: 15_000_000_000)
 
         do {
-            // Get northbound and southbound departures
+            // Get northbound departures first
+            debugLog("📊 Fetching northbound departures for delay predictions...")
             let northDeps = try await SIRIService.nextDepartures(
                 from: northboundStopCode,
                 to: southboundStopCode,
@@ -304,6 +306,12 @@ struct RootView: View {
                 apiKey: key,
                 expectedDirection: "N"
             )
+
+            // Wait additional 5 seconds before southbound call to respect rate limit
+            debugLog("📊 Waiting 5 seconds before southbound request...")
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+
+            debugLog("📊 Fetching southbound departures for delay predictions...")
             let southDeps = try await SIRIService.nextDepartures(
                 from: southboundStopCode,
                 to: northboundStopCode,
@@ -1041,40 +1049,47 @@ struct SettingsScreen: View {
         print("🧪 Creating test delay data for current time: hour \(currentHour), weekday \(currentWeekday)")
         print("🧪 Stations: North=\(northStation) (\(northStopCode)), South=\(southStation) (\(southStopCode))")
 
-        // In DEBUG mode, add delay predictions for ALL train numbers (100-300)
-        // This ensures any train that shows up will have delay predictions
+        // In DEBUG mode, add delay predictions for trains currently showing
+        // Use simple approach: just create data for current hour ±3 hours to avoid freezing
         var totalRecords = 0
 
-        // Cover all possible Caltrain train numbers
-        for trainNumber in 100...300 {
+        // Common Caltrain train numbers (even northbound, odd southbound)
+        let trainNumbers = Array(stride(from: 100, through: 200, by: 1))
+
+        for trainNumber in trainNumbers {
             let trainNumStr = String(trainNumber)
 
-            // Add 12 delay records for each train to get "High" confidence
-            for i in 0..<12 {
-                // Create records from past weeks, same weekday and hour as now
-                let weeksAgo = Int.random(in: 0..<4)
-                let daysAgo = weeksAgo * 7
-                guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
+            // Add records for current hour ±3 hours (7 hours total)
+            for hourOffset in -3...3 {
+                let targetHour = (currentHour + hourOffset + 24) % 24
 
-                // Use current hour ±1 hour to match prediction logic
-                var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
-                components.hour = currentHour + Int.random(in: -1...1)
-                components.minute = Int.random(in: 0...59)
-                guard let scheduledTime = calendar.date(from: components) else { continue }
+                // Add 12 records per hour to get "High" confidence
+                for i in 0..<12 {
+                    // Create records from past weeks, same weekday
+                    let weeksAgo = Int.random(in: 0..<4)
+                    let daysAgo = weeksAgo * 7
+                    guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
 
-                // Simulate realistic delays: 3-7 minutes late
-                let delay = Int.random(in: 3...7)
+                    // Use the target hour
+                    var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
+                    components.hour = targetHour
+                    components.minute = Int.random(in: 0...59)
+                    guard let scheduledTime = calendar.date(from: components) else { continue }
 
-                // Alternate between north and south stops
-                let stopCode = i.isMultiple(of: 2) ? northStopCode : southStopCode
+                    // Simulate realistic delays: 3-7 minutes late
+                    let delay = Int.random(in: 3...7)
 
-                DelayPredictor.shared.recordDelay(
-                    trainNumber: trainNumStr,
-                    stopCode: stopCode,
-                    scheduledTime: scheduledTime,
-                    actualDelay: delay
-                )
-                totalRecords += 1
+                    // Alternate between north and south stops
+                    let stopCode = i.isMultiple(of: 2) ? northStopCode : southStopCode
+
+                    DelayPredictor.shared.recordDelay(
+                        trainNumber: trainNumStr,
+                        stopCode: stopCode,
+                        scheduledTime: scheduledTime,
+                        actualDelay: delay
+                    )
+                    totalRecords += 1
+                }
             }
         }
 
@@ -2553,7 +2568,11 @@ struct DelayRecord: Codable {
 class DelayPredictor {
     static let shared = DelayPredictor()
     private let delayKey = "delayHistory"
-    private let maxRecords = 500 // Reduced for memory optimization
+    #if DEBUG
+    private let maxRecords = 20000 // Higher limit for testing
+    #else
+    private let maxRecords = 500 // Reduced for memory optimization in production
+    #endif
 
     func recordDelay(trainNumber: String, stopCode: String, scheduledTime: Date, actualDelay: Int) {
         var records = loadRecords()
@@ -3600,7 +3619,7 @@ actor GTFSService {
             if abs(originMinutes - depMinutes) < 2 {
                 // Found matching trip, now find arrival at destination
                 if let destST = stopTimes.first(where: { $0.tripId == originST.tripId && $0.stopId == toStop }) {
-                    let arrTimeComponents = destST.arrivalTime.split(separator: ":")
+                    let arrTimeComponents = destST.departureTime.split(separator: ":")
                     guard arrTimeComponents.count == 3,
                           let arrHours = Int(arrTimeComponents[0]),
                           let arrMinutes = Int(arrTimeComponents[1]) else { continue }
