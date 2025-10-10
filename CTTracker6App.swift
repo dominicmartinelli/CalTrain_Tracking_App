@@ -318,52 +318,78 @@ struct RootView: View {
             let southStop = CaltrainStops.southbound.first { $0.stopCode == southboundStopCode } ?? CaltrainStops.defaultSouthbound
 
             // Check northbound departures
+            debugLog("📊 Checking \(northDeps.count) northbound departures for delay predictions")
             for dep in northDeps {
                 guard let trainNumber = dep.trainNumber,
                       !trainNumber.isEmpty,
-                      let depTime = dep.depTime else { continue }
+                      let depTime = dep.depTime else {
+                    debugLog("  ⏭️ Skipping NB dep - trainNumber: \(dep.trainNumber ?? "nil"), depTime: \(dep.depTime?.description ?? "nil")")
+                    continue
+                }
 
+                debugLog("  🔍 Checking NB train \(trainNumber) at stop \(northboundStopCode)")
                 if let prediction = DelayPredictor.shared.predictDelay(
                     trainNumber: trainNumber,
                     stopCode: northboundStopCode,
                     scheduledTime: depTime
-                ), prediction.averageDelay >= 3 {
-                    newDelayAlerts.append(DelayAlert(
-                        trainNumber: trainNumber,
-                        fromStation: northStop.name,
-                        toStation: southStop.name,
-                        departureTime: depTime,
-                        averageDelay: prediction.averageDelay,
-                        confidence: prediction.confidence
-                    ))
-                    debugLog("📊 Found NB delay: Train \(trainNumber) - \(prediction.averageDelay) min late")
+                ) {
+                    debugLog("  📊 Prediction for train \(trainNumber): \(prediction.averageDelay) min, confidence: \(prediction.confidence)")
+                    if prediction.averageDelay >= 3 {
+                        newDelayAlerts.append(DelayAlert(
+                            trainNumber: trainNumber,
+                            fromStation: northStop.name,
+                            toStation: southStop.name,
+                            departureTime: depTime,
+                            averageDelay: prediction.averageDelay,
+                            confidence: prediction.confidence
+                        ))
+                        debugLog("  ✅ Added NB delay alert: Train \(trainNumber) - \(prediction.averageDelay) min late")
+                    } else {
+                        debugLog("  ⏭️ Delay \(prediction.averageDelay) < 3 min threshold")
+                    }
+                } else {
+                    debugLog("  ⏭️ No prediction found for train \(trainNumber)")
                 }
             }
 
             // Check southbound departures
+            debugLog("📊 Checking \(southDeps.count) southbound departures for delay predictions")
             for dep in southDeps {
                 guard let trainNumber = dep.trainNumber,
                       !trainNumber.isEmpty,
-                      let depTime = dep.depTime else { continue }
+                      let depTime = dep.depTime else {
+                    debugLog("  ⏭️ Skipping SB dep - trainNumber: \(dep.trainNumber ?? "nil"), depTime: \(dep.depTime?.description ?? "nil")")
+                    continue
+                }
 
+                debugLog("  🔍 Checking SB train \(trainNumber) at stop \(southboundStopCode)")
                 if let prediction = DelayPredictor.shared.predictDelay(
                     trainNumber: trainNumber,
                     stopCode: southboundStopCode,
                     scheduledTime: depTime
-                ), prediction.averageDelay >= 3 {
-                    newDelayAlerts.append(DelayAlert(
-                        trainNumber: trainNumber,
-                        fromStation: southStop.name,
-                        toStation: northStop.name,
-                        departureTime: depTime,
-                        averageDelay: prediction.averageDelay,
-                        confidence: prediction.confidence
-                    ))
-                    debugLog("📊 Found SB delay: Train \(trainNumber) - \(prediction.averageDelay) min late")
+                ) {
+                    debugLog("  📊 Prediction for train \(trainNumber): \(prediction.averageDelay) min, confidence: \(prediction.confidence)")
+                    if prediction.averageDelay >= 3 {
+                        newDelayAlerts.append(DelayAlert(
+                            trainNumber: trainNumber,
+                            fromStation: southStop.name,
+                            toStation: northStop.name,
+                            departureTime: depTime,
+                            averageDelay: prediction.averageDelay,
+                            confidence: prediction.confidence
+                        ))
+                        debugLog("  ✅ Added SB delay alert: Train \(trainNumber) - \(prediction.averageDelay) min late")
+                    } else {
+                        debugLog("  ⏭️ Delay \(prediction.averageDelay) < 3 min threshold")
+                    }
+                } else {
+                    debugLog("  ⏭️ No prediction found for train \(trainNumber)")
                 }
             }
 
+            debugLog("📊 Total delay alerts found: \(newDelayAlerts.count)")
             delayAlerts = newDelayAlerts
+            debugLog("📊 Set delayAlerts to \(delayAlerts.count) alerts")
             debugLog("📊 Total delay alerts: \(delayAlerts.count)")
         } catch {
             debugLog("📊 Failed to load delay predictions: \(error)")
@@ -1216,9 +1242,10 @@ struct TrainsScreen: View {
                     DatePicker("", selection: $refDate, displayedComponents: [.hourAndMinute])
                         .labelsHidden()
                         .fixedSize()
-                        .onChange(of: refDate) { _, newDate in
-                            // If selected time is in the past, assume user means tomorrow
-                            if newDate < Date() {
+                        .onChange(of: refDate) { oldDate, newDate in
+                            // If selected time is more than 5 minutes in the past, assume user means tomorrow
+                            let fiveMinutesAgo = Date().addingTimeInterval(-300)
+                            if newDate < fiveMinutesAgo {
                                 if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: newDate) {
                                     refDate = tomorrow
                                 }
@@ -2317,8 +2344,8 @@ struct CaltrainStops {
         CaltrainStop(name: "Tamien", stopCode: "70004", latitude: 37.3119, longitude: -121.8841),
         CaltrainStop(name: "Capitol", stopCode: "70006", latitude: 37.2894, longitude: -121.8421),
         CaltrainStop(name: "Blossom Hill", stopCode: "70008", latitude: 37.2524, longitude: -121.7983),
-        CaltrainStop(name: "Morgan Hill", stopCode: "777402", latitude: 37.1295, longitude: -121.6503),
-        CaltrainStop(name: "San Martin", stopCode: "777403", latitude: 37.0855, longitude: -121.6106),
+        CaltrainStop(name: "Morgan Hill", stopCode: "777400", latitude: 37.1295, longitude: -121.6503),
+        CaltrainStop(name: "San Martin", stopCode: "777405", latitude: 37.0855, longitude: -121.6106),
         CaltrainStop(name: "Gilroy", stopCode: "777404", latitude: 37.0035, longitude: -121.5682)
     ]
 
@@ -3685,6 +3712,7 @@ actor HTTPClient {
     static let shared = HTTPClient()
     private var lastRequestTime: [String: Date] = [:]
     private let minimumInterval: TimeInterval = 5.0 // 5 seconds between requests to same endpoint
+    private let maxCachedEndpoints = 50
 
     private func canMakeRequest(to url: URL) -> Bool {
         let endpoint = "\(url.host ?? "")\(url.path)"
@@ -3697,6 +3725,12 @@ actor HTTPClient {
     private func recordRequest(to url: URL) {
         let endpoint = "\(url.host ?? "")\(url.path)"
         lastRequestTime[endpoint] = Date()
+
+        // Clean up old entries if dictionary grows too large
+        if lastRequestTime.count > maxCachedEndpoints {
+            let sorted = lastRequestTime.sorted { $0.value < $1.value }
+            lastRequestTime = Dictionary(uniqueKeysWithValues: Array(sorted.suffix(maxCachedEndpoints)))
+        }
     }
 
     func get(url: URL, headers: [String:String] = [:], maxRetries: Int = 3) async throws -> (Data, HTTPURLResponse) {
@@ -3965,7 +3999,9 @@ struct SIRIService {
             .init(name: "api_key", value: apiKey),
             .init(name: "agency", value: "CT"),
             .init(name: "stopcode", value: stopCode),
-            .init(name: "format", value: "json")
+            .init(name: "format", value: "json"),
+            .init(name: "MaximumStopVisits", value: String(max)),
+            .init(name: "MaximumNumberOfCallsOnwards", value: "20")
         ]
         guard let url = comps.url else {
             throw NSError(domain: "SIRI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
@@ -4019,9 +4055,14 @@ struct SIRIService {
             print("     DatedVehicleJourneyRef: \(mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? "nil")")
 
             // Filter by direction if we have an expected direction
-            if let expected = expectedDirection, direction != expected {
-                print("    ⏭️  Skipping - wrong direction")
-                continue
+            if let expected = expectedDirection, let dir = direction {
+                // Flexible matching: "N" matches "N", "North", "NB", etc.
+                let matches = (expected.uppercased() == "N" && dir.uppercased().starts(with: "N")) ||
+                             (expected.uppercased() == "S" && dir.uppercased().starts(with: "S"))
+                if !matches {
+                    print("    ⏭️  Skipping - wrong direction (expected: \(expected), got: \(dir))")
+                    continue
+                }
             }
 
             // Extract train number from VehicleRef (e.g., "167")
@@ -4215,7 +4256,7 @@ final class Keychain {
 
     subscript(key: String) -> String? {
         get { queue.sync { read(key) } }
-        set { queue.async(flags: .barrier) { if let v = newValue { self.save(key, v) } else { self.delete(key) } } }
+        set { queue.sync(flags: .barrier) { if let v = newValue { self.save(key, v) } else { self.delete(key) } } }
     }
 
     static func masked(_ key: String) -> String {
