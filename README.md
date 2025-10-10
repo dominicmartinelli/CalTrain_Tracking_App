@@ -103,8 +103,10 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - All credentials stored in iOS Keychain
 - **Debug tools** (DEBUG builds only):
   - Clear delay prediction data
-  - Add test delay data for all trains (8,484 records)
-  - Test data covers current hour ±3 hours for realistic testing
+  - Add test delay data for all trains (~2,376 records)
+  - Test data covers trains 101-199 for current hour ±1
+  - Async generation prevents UI freeze on physical devices
+  - Weekday-matched historical data for accurate predictions
 - About page with data attribution and compliance info
 
 ## Setup
