@@ -11,6 +11,7 @@ import Foundation
 import Security
 import Compression
 import UserNotifications
+import MessageUI
 
 // MARK: - Debug Configuration
 #if DEBUG
@@ -830,6 +831,7 @@ struct SettingsScreen: View {
     @StateObject private var notificationManager = SmartNotificationManager.shared
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @AppStorage("iMessageRecipient") private var iMessageRecipient = ""
 
     var body: some View {
         NavigationStack {
@@ -855,6 +857,17 @@ struct SettingsScreen: View {
                     Text("Smart Features")
                 } footer: {
                     Text("Get notified about your usual trains, delays, and Giants game crowding")
+                        .font(.caption2)
+                }
+
+                Section {
+                    TextField("Phone Number", text: $iMessageRecipient)
+                        .textContentType(.telephoneNumber)
+                        .keyboardType(.phonePad)
+                } header: {
+                    Text("iMessage Sharing")
+                } footer: {
+                    Text("Enter a phone number to quickly share train arrival times via iMessage from the Trains tab")
                         .font(.caption2)
                 }
 
@@ -1442,9 +1455,11 @@ struct TrainsScreen: View {
             var northWithArrival: [Departure] = []
             for dep in north {
                 if dep.arrivalTime == nil, let depTime = dep.depTime {
+                    // For northbound trains, both stops need to use northbound stop codes
+                    let destStopCode = CaltrainStops.getStopCodeForDirection(southboundStopCode, direction: 0) ?? southboundStopCode
                     if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
                         fromStop: northboundStopCode,
-                        toStop: southboundStopCode,
+                        toStop: destStopCode,
                         departureTime: depTime,
                         direction: 0
                     ) {
@@ -1470,9 +1485,11 @@ struct TrainsScreen: View {
             var southWithArrival: [Departure] = []
             for dep in south {
                 if dep.arrivalTime == nil, let depTime = dep.depTime {
+                    // For southbound trains, both stops need to use southbound stop codes
+                    let destStopCode = CaltrainStops.getStopCodeForDirection(northboundStopCode, direction: 1) ?? northboundStopCode
                     if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
                         fromStop: southboundStopCode,
-                        toStop: northboundStopCode,
+                        toStop: destStopCode,
                         departureTime: depTime,
                         direction: 1
                     ) {
@@ -1595,6 +1612,55 @@ struct ServiceAlertRow: View {
     }
 }
 
+// MARK: - Message Composer
+struct MessageComposer: UIViewControllerRepresentable {
+    let recipients: [String]
+    let body: String
+    @Environment(\.dismiss) var dismiss
+
+    func makeUIViewController(context: Context) -> MFMessageComposeViewController {
+        let controller = MFMessageComposeViewController()
+        controller.recipients = recipients
+        controller.body = body
+        controller.messageComposeDelegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: MFMessageComposeViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, MFMessageComposeViewControllerDelegate {
+        let parent: MessageComposer
+
+        init(_ parent: MessageComposer) {
+            self.parent = parent
+        }
+
+        func messageComposeViewController(_ controller: MFMessageComposeViewController, didFinishWith result: MessageComposeResult) {
+            parent.dismiss()
+        }
+    }
+}
+
+// MARK: - Share Sheet
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    @Environment(\.dismiss) var dismiss
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            dismiss()
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 struct DepartureRow: View {
     let dep: Departure
     let destinationLabel: String
@@ -1602,6 +1668,10 @@ struct DepartureRow: View {
     let toStopCode: String
     let direction: String
     @State private var wasTaken = false
+    @State private var showMessageComposer = false
+    @State private var showMessagingAlert = false
+    @State private var showShareSheet = false
+    @AppStorage("iMessageRecipient") private var iMessageRecipient = ""
 
     var delayPrediction: (averageDelay: Int, confidence: String)? {
         guard let trainNumber = dep.trainNumber, let depTime = dep.depTime else {
@@ -1668,6 +1738,31 @@ struct DepartureRow: View {
             }
             Spacer()
 
+            // Share button (only show if recipient is configured)
+            if !iMessageRecipient.isEmpty {
+                Menu {
+                    if MFMessageComposeViewController.canSendText() {
+                        Button {
+                            debugLog("🔵 iMessage option selected")
+                            showMessageComposer = true
+                        } label: {
+                            Label("Send iMessage", systemImage: "message.fill")
+                        }
+                    }
+                    Button {
+                        debugLog("🔵 Share option selected")
+                        showShareSheet = true
+                    } label: {
+                        Label("Share...", systemImage: "square.and.arrow.up")
+                    }
+                } label: {
+                    Image(systemName: "message.fill")
+                        .foregroundStyle(ThemeManager.shared.currentTheme.accentColor)
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+            }
+
             if wasTaken {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -1689,6 +1784,20 @@ struct DepartureRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Departure in \(dep.minutes) minutes to \(destinationLabel)")
+        .sheet(isPresented: $showMessageComposer) {
+            MessageComposer(
+                recipients: [iMessageRecipient],
+                body: createMessageBody()
+            )
+        }
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(items: [createMessageBody()])
+        }
+        .alert("Messaging Not Available", isPresented: $showMessagingAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Text messaging is not available on this device. Please try on a physical device with Messages configured.")
+        }
     }
 
     func recordTrip() {
@@ -1721,6 +1830,16 @@ struct DepartureRow: View {
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
         }
+    }
+
+    func createMessageBody() -> String {
+        let arrTimeStr = arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "Unknown"
+
+        var message = "Train Arrival Update:\n"
+        message += "Arrival time: \(arrTimeStr)\n\n"
+        message += "Isn't this so awesome! You got to love my brillance."
+
+        return message
     }
 }
 
@@ -2427,6 +2546,32 @@ struct CaltrainStops {
     // Default stops (Mountain View northbound and 22nd Street southbound)
     static let defaultNorthbound = northbound.first { $0.name == "Mountain View" } ?? northbound[0]
     static let defaultSouthbound = southbound.first { $0.name == "22nd Street" } ?? southbound[southbound.count - 1]
+
+    // Convert a stop code to its counterpart in the opposite direction
+    // e.g., 70022 (22nd St southbound) -> 70021 (22nd St northbound)
+    static func getStopCodeForDirection(_ stopCode: String, direction: Int) -> String? {
+        // direction 0 = northbound, 1 = southbound
+        if direction == 0 {
+            // Find in northbound list
+            if let stop = northbound.first(where: { $0.stopCode == stopCode }) {
+                return stop.stopCode
+            }
+            // If not found, find the southbound stop with same name and return northbound equivalent
+            if let southStop = southbound.first(where: { $0.stopCode == stopCode }) {
+                return northbound.first(where: { $0.name == southStop.name })?.stopCode
+            }
+        } else {
+            // Find in southbound list
+            if let stop = southbound.first(where: { $0.stopCode == stopCode }) {
+                return stop.stopCode
+            }
+            // If not found, find the northbound stop with same name and return southbound equivalent
+            if let northStop = northbound.first(where: { $0.stopCode == stopCode }) {
+                return southbound.first(where: { $0.name == northStop.name })?.stopCode
+            }
+        }
+        return nil
+    }
 }
 
 struct Departure: Identifiable, Hashable {
@@ -3590,23 +3735,29 @@ actor GTFSService {
         let targetDateStr = dateFormatter.string(from: targetDate)
         let weekday = pacificCalendar.component(.weekday, from: targetDate)
 
+        debugLog("🔍 getArrivalTime: from=\(fromStop), to=\(toStop), depTime=\(departureTime.formatted(date: .omitted, time: .shortened)), dir=\(direction)")
+
         // Find active services
         let activeServices = getActiveServices(dateStr: targetDateStr, weekday: weekday)
+        debugLog("  Active services: \(activeServices.count)")
 
         // Find trips for this direction
         let relevantTrips = trips.filter { trip in
             trip.directionId == direction && activeServices.contains(trip.serviceId)
         }
+        debugLog("  Relevant trips for direction \(direction): \(relevantTrips.count)")
 
         // Get stop times for origin stop
         let relevantTripIds = Set(relevantTrips.map { $0.tripId })
         let originStopTimes = stopTimes.filter { st in
             st.stopId == fromStop && relevantTripIds.contains(st.tripId)
         }
+        debugLog("  Origin stop times: \(originStopTimes.count)")
 
-        // Find the trip that matches our departure time (within 2 minutes)
+        // Find the trip that matches our departure time (within 5 minutes)
         let depComponents = pacificCalendar.dateComponents([.hour, .minute], from: departureTime)
         let depMinutes = (depComponents.hour ?? 0) * 60 + (depComponents.minute ?? 0)
+        debugLog("  Looking for departure at \(depMinutes) minutes (\(depComponents.hour ?? 0):\(depComponents.minute ?? 0))")
 
         for originST in originStopTimes {
             let timeComponents = originST.departureTime.split(separator: ":")
@@ -3617,14 +3768,19 @@ actor GTFSService {
             let actualHours = hours >= 24 ? hours - 24 : hours
             let originMinutes = actualHours * 60 + minutes
 
-            // Match within 2 minutes
-            if abs(originMinutes - depMinutes) < 2 {
+            // Match within 5 minutes (increased tolerance for more reliable matching)
+            if abs(originMinutes - depMinutes) <= 5 {
+                debugLog("  ✅ Found matching trip! tripId=\(originST.tripId), originMinutes=\(originMinutes), diff=\(abs(originMinutes - depMinutes))")
                 // Found matching trip, now find arrival at destination
                 if let destST = stopTimes.first(where: { $0.tripId == originST.tripId && $0.stopId == toStop }) {
+                    debugLog("  ✅ Found destination stop in trip!")
                     let arrTimeComponents = destST.departureTime.split(separator: ":")
                     guard arrTimeComponents.count == 3,
                           let arrHours = Int(arrTimeComponents[0]),
-                          let arrMinutes = Int(arrTimeComponents[1]) else { continue }
+                          let arrMinutes = Int(arrTimeComponents[1]) else {
+                        debugLog("  ❌ Failed to parse arrival time components")
+                        continue
+                    }
 
                     let actualArrHours = arrHours >= 24 ? arrHours - 24 : arrHours
                     var arrivalDate = targetDate
@@ -3633,12 +3789,18 @@ actor GTFSService {
                     }
 
                     if let result = pacificCalendar.date(bySettingHour: actualArrHours, minute: arrMinutes, second: 0, of: arrivalDate) {
+                        debugLog("  ✅ Calculated arrival: \(result.formatted(date: .omitted, time: .shortened))")
                         return result
+                    } else {
+                        debugLog("  ❌ Failed to create arrival date")
                     }
+                } else {
+                    debugLog("  ❌ Destination stop \(toStop) not found in trip \(originST.tripId)")
                 }
             }
         }
 
+        debugLog("  ❌ No matching trip found for departure")
         return nil
     }
 
