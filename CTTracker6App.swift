@@ -1801,22 +1801,17 @@ struct DepartureRow: View {
     }
 
     func recordTrip() {
-        // Create and record a trip entry
-        let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction, wasTripTaken: true)
-        var history = CommuteHistoryStorage.shared.loadHistory()
-        history.append(entry)
-
-        // Keep only recent entries
-        if history.count > 500 {
-            history = Array(history.suffix(500))
-        }
-
-        if let data = try? JSONEncoder().encode(history) {
-            UserDefaults.standard.set(data, forKey: "commuteHistory")
-        }
-
-        // Record for gamification
+        // Record for gamification first (thread-safe)
         let (_, newAchievements) = GamificationManager.shared.recordTrip()
+
+        // Record trip in thread-safe storage
+        CommuteHistoryStorage.shared.recordTrip(
+            fromStopCode: fromStopCode,
+            toStopCode: toStopCode,
+            direction: direction
+        ) {
+            // This completion runs on main thread after successful save
+        }
 
         wasTaken = true
 
@@ -3018,20 +3013,51 @@ class CommuteHistoryStorage {
     private let historyKey = "commuteHistory"
     private let maxHistoryEntries = 500 // Keep last 500 checks
 
+    // Thread-safe queue to prevent data races during concurrent writes
+    private let queue = DispatchQueue(label: "com.caltrainchecker.commutehistory", attributes: .concurrent)
+
     func recordCheck(fromStopCode: String, toStopCode: String, direction: String) {
-        var history = loadHistory()
-        let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction)
-        history.append(entry)
+        queue.async(flags: .barrier) {
+            var history = self.loadHistoryUnsafe()
+            let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction)
+            history.append(entry)
 
-        // Keep only recent entries
-        if history.count > maxHistoryEntries {
-            history = Array(history.suffix(maxHistoryEntries))
+            // Keep only recent entries
+            if history.count > self.maxHistoryEntries {
+                history = Array(history.suffix(self.maxHistoryEntries))
+            }
+
+            self.saveHistoryUnsafe(history)
         }
+    }
 
-        saveHistory(history)
+    func recordTrip(fromStopCode: String, toStopCode: String, direction: String, completion: @escaping () -> Void) {
+        queue.async(flags: .barrier) {
+            var history = self.loadHistoryUnsafe()
+            let entry = CommuteHistoryEntry(fromStopCode: fromStopCode, toStopCode: toStopCode, direction: direction, wasTripTaken: true)
+            history.append(entry)
+
+            // Keep only recent entries
+            if history.count > self.maxHistoryEntries {
+                history = Array(history.suffix(self.maxHistoryEntries))
+            }
+
+            self.saveHistoryUnsafe(history)
+
+            // Call completion on main thread
+            DispatchQueue.main.async {
+                completion()
+            }
+        }
     }
 
     func loadHistory() -> [CommuteHistoryEntry] {
+        queue.sync {
+            return loadHistoryUnsafe()
+        }
+    }
+
+    private func loadHistoryUnsafe() -> [CommuteHistoryEntry] {
         guard let data = UserDefaults.standard.data(forKey: historyKey),
               let history = try? JSONDecoder().decode([CommuteHistoryEntry].self, from: data) else {
             return []
@@ -3039,14 +3065,22 @@ class CommuteHistoryStorage {
         return history
     }
 
-    private func saveHistory(_ history: [CommuteHistoryEntry]) {
+    private func saveHistoryUnsafe(_ history: [CommuteHistoryEntry]) {
         if let data = try? JSONEncoder().encode(history) {
             UserDefaults.standard.set(data, forKey: historyKey)
         }
     }
 
+    private func saveHistory(_ history: [CommuteHistoryEntry]) {
+        queue.async(flags: .barrier) {
+            self.saveHistoryUnsafe(history)
+        }
+    }
+
     func clearHistory() {
-        UserDefaults.standard.removeObject(forKey: historyKey)
+        queue.async(flags: .barrier) {
+            UserDefaults.standard.removeObject(forKey: self.historyKey)
+        }
     }
 
     // Analyze patterns to find user's regular commutes
@@ -3514,6 +3548,12 @@ actor GTFSService {
 
         guard decompressedSize > 0 else {
             throw NSError(domain: "GTFS", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to decompress ZIP data"])
+        }
+
+        // Critical: Validate that decompressed size matches expected size
+        // This prevents corrupted data from being used in the app
+        guard decompressedSize == uncompressedSize else {
+            throw NSError(domain: "GTFS", code: 10, userInfo: [NSLocalizedDescriptionKey: "Decompression size mismatch: expected \(uncompressedSize) bytes, got \(decompressedSize) bytes. Data may be corrupted."])
         }
 
         return Data(bytes: destinationBuffer, count: decompressedSize)
