@@ -222,6 +222,10 @@ All Caltrain stations are supported:
   - Sanitized error messages (no server response leaks)
   - ZIP path traversal and ZIP bomb protection
   - Input validation for API keys and file paths
+- **Performance Optimizations** (Updated Nov 2025)
+  - O(1) dictionary cleanup in HTTPClient for efficient rate limiting
+  - Optimized arrival time matching with ±2 minute tolerance for accuracy
+  - Debug-only logging with debugLog() to eliminate production console overhead
 - Robust SIRI XML/JSON response parsing
 - Haversine formula for calculating distances between venues and stations
 - Custom splash screen with fade-out animation

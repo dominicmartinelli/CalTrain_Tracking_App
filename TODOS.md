@@ -1,13 +1,14 @@
 # Caltrain Tracking App - TODO List
 
 **Generated:** November 3, 2025
+**Last Updated:** November 8, 2025
 **Total Items:** 18
-**Completed:** 2
-**Remaining:** 16
+**Completed:** 6
+**Remaining:** 12
 
 ---
 
-## ✅ Completed (2)
+## ✅ Completed (6)
 
 ### 1. ~~Fix critical data race in CommuteHistoryStorage.recordTrip()~~ ✅
 - **Priority:** Critical
@@ -28,29 +29,42 @@
 - **Files Changed:**
   - `CTTracker6App.swift:3553-3557` - Added size validation in decompress()
 
+### 3. ~~Optimize HTTPClient dictionary cleanup from O(n log n) to O(1)~~ ✅
+- **Priority:** High
+- **Status:** COMPLETED (November 8, 2025)
+- **Location:** `CTTracker6App.swift:4077-4080` - `HTTPClient.recordRequest()`
+- **Issue:** Dictionary cleanup sorted entire dictionary (O(n log n)) then took suffix. Inefficient when rate limiting many endpoints.
+- **Solution:** Changed to O(1) operation that finds and removes only the oldest entry.
+- **Files Changed:**
+  - `CTTracker6App.swift:4077-4080` - Optimized dictionary cleanup
+
+### 5. ~~Reduce arrival time matching tolerance from ±5 to ±2 minutes~~ ✅
+- **Priority:** Medium
+- **Status:** COMPLETED (November 8, 2025)
+- **Location:** `CTTracker6App.swift:3812` - `GTFSService.getArrivalTime()`
+- **Issue:** ±5 minute tolerance for matching departure times could match wrong trip if trains run close together
+- **Solution:** Reduced tolerance to ±2 minutes for more accurate trip matching.
+- **Files Changed:**
+  - `CTTracker6App.swift:3812` - Changed tolerance from 5 to 2 minutes
+
+### 13. ~~Replace all print() statements with debugLog()~~ ✅
+- **Priority:** Low
+- **Status:** COMPLETED (November 8, 2025)
+- **Locations:** Throughout codebase (28 occurrences)
+- **Issue:** Many `print()` statements execute in production builds, causing console noise
+- **Solution:** Replaced all `print()` with `debugLog()` which respects DEBUG flag.
+- **Files Changed:**
+  - `CTTracker6App.swift` - 28 print() statements replaced with debugLog()
+
+### 18. ~~Fix nil userInfo in notification posting~~ ✅
+- **Priority:** Low
+- **Status:** COMPLETED (November 8, 2025)
+- **Investigation Result:** No NotificationCenter.default.post() calls found in codebase. All NSError objects properly include userInfo dictionaries. Warning is from iOS internals (UIKit/SwiftUI), not app code.
+- **Conclusion:** No code changes needed - warning is system-level, not under app control.
+
 ---
 
-## 🔴 High Priority - Performance (2)
-
-### 3. Optimize HTTPClient dictionary cleanup from O(n log n) to O(1)
-- **Priority:** High
-- **Location:** `CTTracker6App.swift:4037-4040` - `HTTPClient.recordRequest()`
-- **Issue:** Dictionary cleanup sorts entire dictionary (O(n log n)) then takes suffix. Inefficient when rate limiting many endpoints.
-- **Current Code:**
-  ```swift
-  if lastRequestTime.count > maxCachedEndpoints {
-      let sorted = lastRequestTime.sorted { $0.value < $1.value }
-      lastRequestTime = Dictionary(uniqueKeysWithValues: Array(sorted.suffix(maxCachedEndpoints)))
-  }
-  ```
-- **Recommended Fix:**
-  ```swift
-  if lastRequestTime.count > maxCachedEndpoints {
-      let oldest = lastRequestTime.min(by: { $0.value < $1.value })?.key
-      if let key = oldest { lastRequestTime.removeValue(forKey: key) }
-  }
-  ```
-- **Impact:** Performance degradation when rate limiting many different API endpoints
+## 🔴 High Priority - Performance (1)
 
 ### 4. Optimize delay prediction filtering with indexed data structure
 - **Priority:** High
@@ -70,18 +84,7 @@
 
 ---
 
-## 🟡 Medium Priority - Bugs (6)
-
-### 5. Reduce arrival time matching tolerance from ±5 to ±2 minutes
-- **Priority:** Medium
-- **Location:** `CTTracker6App.swift:3772` - `GTFSService.getArrivalTime()`
-- **Issue:** ±5 minute tolerance for matching departure times could match wrong trip if trains run close together
-- **Current Code:**
-  ```swift
-  if abs(originMinutes - depMinutes) <= 5 {
-  ```
-- **Recommended Fix:** Reduce to `<= 2` or add train number matching if available
-- **Impact:** Wrong arrival times displayed for closely-spaced trains
+## 🟡 Medium Priority - Bugs (5)
 
 ### 6. Improve direction matching from string prefix to exact match
 - **Priority:** Medium
@@ -141,7 +144,7 @@
 
 ---
 
-## 🟢 Code Quality (4)
+## 🟢 Code Quality (3)
 
 ### 11. Extract duplicate arrival time calculation code
 - **Priority:** Low
@@ -159,7 +162,6 @@
   - Line 3492: `100` (compression ratio limit)
   - Line 298: `15_000_000_000` (15 second delay)
   - Line 1810: `500` (history limit)
-  - Line 3772: `5` (arrival time tolerance)
 - **Recommended Fix:** Extract to named constants at top of file or in configuration struct
   ```swift
   private enum GTFSConfig {
@@ -168,16 +170,6 @@
   }
   ```
 - **Impact:** Hard to maintain, unclear intent
-
-### 13. Replace all print() statements with debugLog()
-- **Priority:** Low
-- **Locations:** Throughout codebase
-- **Issue:** Many `print()` statements execute in production builds
-- **Examples:**
-  - Line 920: `print("🔴 CLEAR BUTTON TAPPED")`
-  - Lines 4360-4362: Multiple print statements in SIRI parsing
-- **Recommended Fix:** Replace all `print()` with `debugLog()` which respects DEBUG flag
-- **Impact:** Console noise in production, potential performance impact
 
 ### 14. Add defensive nil checks in DepartureRow
 - **Priority:** Low
@@ -242,7 +234,7 @@
 
 ---
 
-## 🔵 Low Priority - Warnings (2)
+## 🔵 Low Priority - Warnings (1)
 
 ### 17. Fix _UIReparentingView warning in MessageComposer/ShareSheet
 - **Priority:** Low
@@ -257,47 +249,28 @@
 - **Recommended Fix:** Research SwiftUI best practices for UIViewControllerRepresentable, or test on physical device to confirm it's not actually a problem
 - **Note:** This is a known SwiftUI issue with UIViewControllerRepresentable
 
-### 18. Fix nil userInfo in notification posting (SmartNotificationManager)
-- **Priority:** Low
-- **Location:** Likely around `CTTracker6App.swift:3240` - SmartNotificationManager
-- **Issue:** Posting notifications with nil userInfo dictionary
-- **Warning Message:**
-  ```
-  [Notifications]: Attempting to post will notification with nil userInfo
-  [Notifications]: Attempting to post did notification with nil userInfo
-  ```
-- **Impact:** Console warnings only, notifications still work
-- **Recommended Fix:** Add empty dictionary `[:]` if no userInfo needed
-  ```swift
-  // Before
-  NotificationCenter.default.post(name: .someNotification, object: nil)
-
-  // After
-  NotificationCenter.default.post(name: .someNotification, object: nil, userInfo: [:])
-  ```
-
 ---
 
 ## 📊 Summary
 
 | Priority | Count | Items |
 |----------|-------|-------|
-| ✅ Completed | 2 | Critical data race, GTFS decompression |
-| 🔴 High | 2 | HTTPClient optimization, Delay prediction optimization |
-| 🟡 Medium | 6 | Arrival tolerance, Direction matching, iMessage validation, History limit, Test data, Date math |
-| 🟢 Code Quality | 4 | Duplicate code, Magic numbers, Print statements, Nil checks |
+| ✅ Completed | 6 | Data race, GTFS decompression, HTTPClient optimization, Arrival tolerance, Print statements, Notification investigation |
+| 🔴 High | 1 | Delay prediction optimization |
+| 🟡 Medium | 5 | Direction matching, iMessage validation, History limit, Test data, Date math |
+| 🟢 Code Quality | 3 | Duplicate code, Magic numbers, Nil checks |
 | 🏗️ Architecture | 2 | File splitting, Error handling standardization |
-| 🔵 Low Priority | 2 | UIReparentingView warning, Notification userInfo |
+| 🔵 Low Priority | 1 | UIReparentingView warning |
 
 ---
 
 ## 🎯 Recommended Order of Implementation
 
-### Phase 1: Quick Wins (1-2 hours)
-1. HTTPClient dictionary cleanup (Item #3)
-2. Reduce arrival time tolerance (Item #5)
-3. Replace print() statements (Item #13)
-4. Fix notification userInfo (Item #18)
+### Phase 1: Quick Wins ✅ COMPLETED (November 8, 2025)
+1. ✅ HTTPClient dictionary cleanup (Item #3)
+2. ✅ Reduce arrival time tolerance (Item #5)
+3. ✅ Replace print() statements (Item #13)
+4. ✅ Fix notification userInfo (Item #18)
 
 ### Phase 2: Performance & Bugs (4-6 hours)
 1. Optimize delay prediction filtering (Item #4)
@@ -324,8 +297,9 @@
 ## 📝 Notes
 
 - **Critical bugs are fixed** - App is production-ready
+- **Phase 1 Quick Wins completed** (Nov 8, 2025) - Performance optimizations and code quality improvements
 - **Simulator warnings** - Most error messages are simulator-only and safe to ignore
 - **Test on physical device** - Verify fixes work correctly on actual hardware
 - **Incremental improvements** - Tackle these items over time, prioritize based on user feedback
 
-**Last Updated:** November 3, 2025
+**Last Updated:** November 8, 2025
