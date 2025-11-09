@@ -281,7 +281,7 @@ struct RootView: View {
                 )
             }
         } catch {
-            print("Failed to load alerts: \(error)")
+            debugLog("Failed to load alerts: \(error)")
         }
     }
 
@@ -917,7 +917,7 @@ struct SettingsScreen: View {
                         Button("Verify") { verifyTicketmaster() }
                             .buttonStyle(.bordered)
                         Button("Clear") {
-                            print("🔴 CLEAR BUTTON TAPPED")
+                            debugLog("🔴 CLEAR BUTTON TAPPED")
                             Keychain.shared["api_ticketmaster"] = nil
                             apiKeyTicketmaster = ""
                             statusTicketmaster = "Cleared from Keychain."
@@ -1054,8 +1054,8 @@ struct SettingsScreen: View {
 
     #if DEBUG
     private func addTestDelayData(northStopCode: String, southStopCode: String) async {
-        print("🧪 Creating test delay data for ALL trains at current hour")
-        print("🧪 North stop: \(northStopCode), South stop: \(southStopCode)")
+        debugLog("🧪 Creating test delay data for ALL trains at current hour")
+        debugLog("🧪 North stop: \(northStopCode), South stop: \(southStopCode)")
 
         let calendar = Calendar.current
         let now = Date()
@@ -1106,9 +1106,9 @@ struct SettingsScreen: View {
             }
         }
 
-        print("✅ Added \(totalRecords) test delay records for trains 101-199")
-        print("🧪 Weekday: \(currentWeekday), Hour: \(currentHour)±1, Both stops")
-        print("📊 Go to Alerts tab to see predictions!")
+        debugLog("✅ Added \(totalRecords) test delay records for trains 101-199")
+        debugLog("🧪 Weekday: \(currentWeekday), Hour: \(currentHour)±1, Both stops")
+        debugLog("📊 Go to Alerts tab to see predictions!")
 
         // Show success message to user
         await MainActor.run {
@@ -1541,7 +1541,7 @@ struct TrainsScreen: View {
 
         } catch {
             self.error = (error as NSError).localizedDescription
-            print("❌ Error loading trains: \(error)")
+            debugLog("❌ Error loading trains: \(error)")
         }
     }
 
@@ -3212,7 +3212,7 @@ class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCe
 
         // Trigger 15 minutes before departure
         guard let triggerDate = Calendar.current.date(byAdding: .minute, value: -15, to: trainTime) else {
-            print("⚠️ Failed to calculate trigger date for notification")
+            debugLog("⚠️ Failed to calculate trigger date for notification")
             return
         }
         // Use full date components to ensure it triggers today, not tomorrow
@@ -3286,7 +3286,7 @@ class WeatherService: ObservableObject {
         let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(station.latitude)&longitude=\(station.longitude)&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America/Los_Angeles"
 
         guard let url = URL(string: urlString) else {
-            print("❌ Invalid weather URL for \(station.name)")
+            debugLog("❌ Invalid weather URL for \(station.name)")
             return
         }
 
@@ -3590,7 +3590,7 @@ actor GTFSService {
         // Unzip the GTFS data
         try unzipGTFS(from: zipPath, to: tempDir)
 
-        print("📖 Parsing GTFS CSV files...")
+        debugLog("📖 Parsing GTFS CSV files...")
 
         // Parse each CSV file
         stops = try parseStops(at: tempDir.appendingPathComponent("stops.txt"))
@@ -3808,8 +3808,8 @@ actor GTFSService {
             let actualHours = hours >= 24 ? hours - 24 : hours
             let originMinutes = actualHours * 60 + minutes
 
-            // Match within 5 minutes (increased tolerance for more reliable matching)
-            if abs(originMinutes - depMinutes) <= 5 {
+            // Match within 2 minutes for accurate trip matching
+            if abs(originMinutes - depMinutes) <= 2 {
                 debugLog("  ✅ Found matching trip! tripId=\(originST.tripId), originMinutes=\(originMinutes), diff=\(abs(originMinutes - depMinutes))")
                 // Found matching trip, now find arrival at destination
                 if let destST = stopTimes.first(where: { $0.tripId == originST.tripId && $0.stopId == toStop }) {
@@ -4073,10 +4073,10 @@ actor HTTPClient {
         let endpoint = "\(url.host ?? "")\(url.path)"
         lastRequestTime[endpoint] = Date()
 
-        // Clean up old entries if dictionary grows too large
+        // Clean up old entries if dictionary grows too large (O(1) operation)
         if lastRequestTime.count > maxCachedEndpoints {
-            let sorted = lastRequestTime.sorted { $0.value < $1.value }
-            lastRequestTime = Dictionary(uniqueKeysWithValues: Array(sorted.suffix(maxCachedEndpoints)))
+            let oldest = lastRequestTime.min(by: { $0.value < $1.value })?.key
+            if let key = oldest { lastRequestTime.removeValue(forKey: key) }
         }
     }
 
@@ -4309,7 +4309,7 @@ struct SIRIService {
             let env = try JSONDecoder().decode(AlertsEnvelope.self, from: cleaned)
             let sd = env.Siri?.ServiceDelivery ?? env.ServiceDelivery
             let situations = sd?.SituationExchangeDelivery?.first?.Situations?.PtSituationElement ?? []
-            print("🚨 Found \(situations.count) service alert situations")
+            debugLog("🚨 Found \(situations.count) service alert situations")
 
             let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             let df = ISO8601DateFormatter()
@@ -4318,7 +4318,7 @@ struct SIRIService {
             for sit in situations {
                 let creationTime = sit.CreationTime.flatMap { dfFrac.date(from: $0) ?? df.date(from: $0) }
                 let summary = sit.Summary ?? "Service Alert"
-                print("🚨 Alert: \(summary)")
+                debugLog("🚨 Alert: \(summary)")
                 let alert = ServiceAlert(
                     id: sit.SituationNumber ?? UUID().uuidString,
                     summary: summary,
@@ -4328,7 +4328,7 @@ struct SIRIService {
                 )
                 alerts.append(alert)
             }
-            print("🚨 Returning \(alerts.count) service alerts")
+            debugLog("🚨 Returning \(alerts.count) service alerts")
             return alerts
         } catch {
             debugLog("🚨 Failed to decode alerts: \(error)")
@@ -4385,7 +4385,7 @@ struct SIRIService {
         let now = refDate // Use the selected time from the picker
 
         var out: [Departure] = []
-        print("📍 Stop: \(stop), Destination: \(destinationStop ?? "any"), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
+        debugLog("📍 Stop: \(stop), Destination: \(destinationStop ?? "any"), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
         for v in visits {
             let mvj = v.MonitoredVehicleJourney
             let aimed = mvj.MonitoredCall?.AimedDepartureTime
@@ -4395,11 +4395,11 @@ struct SIRIService {
             let direction = mvj.DirectionRef
 
             // Debug: Print all available fields
-            print("  🚂 Dir: \(direction ?? "?"), Aimed: \(aimed ?? "nil"), Minutes: \(minutes), Dest: \(mvj.DestinationName ?? "nil")")
-            print("     LineRef: \(mvj.LineRef ?? "nil")")
-            print("     PublishedLineName: \(mvj.PublishedLineName ?? "nil")")
-            print("     VehicleRef: \(mvj.VehicleRef ?? "nil")")
-            print("     DatedVehicleJourneyRef: \(mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? "nil")")
+            debugLog("  🚂 Dir: \(direction ?? "?"), Aimed: \(aimed ?? "nil"), Minutes: \(minutes), Dest: \(mvj.DestinationName ?? "nil")")
+            debugLog("     LineRef: \(mvj.LineRef ?? "nil")")
+            debugLog("     PublishedLineName: \(mvj.PublishedLineName ?? "nil")")
+            debugLog("     VehicleRef: \(mvj.VehicleRef ?? "nil")")
+            debugLog("     DatedVehicleJourneyRef: \(mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? "nil")")
 
             // Filter by direction if we have an expected direction
             if let expected = expectedDirection, let dir = direction {
@@ -4407,7 +4407,7 @@ struct SIRIService {
                 let matches = (expected.uppercased() == "N" && dir.uppercased().starts(with: "N")) ||
                              (expected.uppercased() == "S" && dir.uppercased().starts(with: "S"))
                 if !matches {
-                    print("    ⏭️  Skipping - wrong direction (expected: \(expected), got: \(dir))")
+                    debugLog("    ⏭️  Skipping - wrong direction (expected: \(expected), got: \(dir))")
                     continue
                 }
             }
@@ -4415,23 +4415,23 @@ struct SIRIService {
             // Extract train number from VehicleRef (e.g., "167")
             let journeyRef = mvj.FramedVehicleJourneyRef?.DatedVehicleJourneyRef ?? UUID().uuidString
             let trainNumber = mvj.VehicleRef // Use VehicleRef instead of LineRef for actual train number
-            print("  🚂 Creating departure with trainNumber: '\(trainNumber ?? "nil")'")
+            debugLog("  🚂 Creating departure with trainNumber: '\(trainNumber ?? "nil")'")
 
             // Extract arrival time from OnwardCalls if destination stop is specified
             var arrivalTime: Date? = nil
             if let destStop = destinationStop {
                 if let onwardCalls = mvj.OnwardCalls {
-                    print("     🔍 Searching \(onwardCalls.count) onward calls for stop \(destStop)")
+                    debugLog("     🔍 Searching \(onwardCalls.count) onward calls for stop \(destStop)")
                     for call in onwardCalls {
-                        print("        Stop: \(call.StopPointRef ?? "nil"), Arrival: \(call.AimedArrivalTime ?? "nil")")
+                        debugLog("        Stop: \(call.StopPointRef ?? "nil"), Arrival: \(call.AimedArrivalTime ?? "nil")")
                         if call.StopPointRef == destStop, let arrivalTimeStr = call.AimedArrivalTime {
                             arrivalTime = dfFrac.date(from: arrivalTimeStr) ?? df.date(from: arrivalTimeStr)
-                            print("     ✅ Found arrival time: \(arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
+                            debugLog("     ✅ Found arrival time: \(arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
                             break
                         }
                     }
                 } else {
-                    print("     ⚠️ No OnwardCalls in API response - API may need MaximumNumberOfCallsOnwards parameter")
+                    debugLog("     ⚠️ No OnwardCalls in API response - API may need MaximumNumberOfCallsOnwards parameter")
                 }
             }
 
@@ -4447,7 +4447,7 @@ struct SIRIService {
         }
         // Sort by time and take first 3
         let result = Array(out.sorted { ($0.depTime ?? .distantFuture) < ($1.depTime ?? .distantFuture) }.prefix(3))
-        print("  ✅ Returning \(result.count) departures")
+        debugLog("  ✅ Returning \(result.count) departures")
         return result
     }
 }
