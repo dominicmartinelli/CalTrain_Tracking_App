@@ -1359,32 +1359,51 @@ struct ServiceAlertRow: View {
     let alert: ServiceAlert
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Summary/Header
             HStack {
                 Text(alert.summary)
-                    .font(.subheadline)
+                    .font(.headline)
                     .fontWeight(.semibold)
                 Spacer()
                 if let severity = alert.severity {
                     Text(severity)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(4)
                 }
             }
 
+            // Description
             if let description = alert.description, !description.isEmpty {
                 Text(description)
-                    .font(.caption)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+            } else {
+                Text("(No description available)")
+                    .font(.body)
+                    .italic()
                     .foregroundStyle(.secondary)
             }
 
+            // Timestamp
             if let creationTime = alert.creationTime {
                 Text(creationTime.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            // Debug: Show raw alert ID
+            #if DEBUG
+            Text("Alert ID: \(alert.id)")
+                .font(.caption2)
+                .foregroundStyle(.gray)
+            #endif
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -3867,6 +3886,7 @@ struct AlertsPtSituationElement: Decodable {
 }
 
 // MARK: - GTFS Realtime Service Alerts models
+// Note: 511.org uses PascalCase (non-standard) instead of standard snake_case
 struct GTFSRealtimeResponse: Codable {
     let Header: GTFSHeader
     let Entities: [GTFSEntity]?
@@ -3902,6 +3922,32 @@ struct GTFSAlert: Codable {
     let HeaderText: GTFSTranslatedString?
     let DescriptionText: GTFSTranslatedString?
     let Severity: String?
+
+    enum CodingKeys: String, CodingKey {
+        // 511.org uses mixed case - mostly PascalCase but "cause" and "effect" are lowercase!
+        case ActivePeriod = "ActivePeriods"  // PLURAL
+        case InformedEntity = "InformedEntities"  // PLURAL
+        case Cause = "cause"  // lowercase!
+        case Effect = "effect"  // lowercase!
+        case Url = "Url"
+        case HeaderText = "HeaderText"
+        case DescriptionText = "DescriptionText"
+        case Severity = "Severity"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Decode using 511.org's mixed-case format
+        ActivePeriod = try? container.decode([GTFSTimePeriod].self, forKey: .ActivePeriod)
+        InformedEntity = try? container.decode([GTFSInformedEntity].self, forKey: .InformedEntity)
+        Cause = try? container.decode(String.self, forKey: .Cause)
+        Effect = try? container.decode(String.self, forKey: .Effect)
+        Url = try? container.decode(GTFSTranslatedString.self, forKey: .Url)
+        HeaderText = try? container.decode(GTFSTranslatedString.self, forKey: .HeaderText)
+        DescriptionText = try? container.decode(GTFSTranslatedString.self, forKey: .DescriptionText)
+        Severity = try? container.decode(String.self, forKey: .Severity)
+    }
 }
 
 struct GTFSTimePeriod: Codable {
@@ -3918,11 +3964,61 @@ struct GTFSInformedEntity: Codable {
 
 struct GTFSTranslatedString: Codable {
     let Translation: [GTFSTranslation]?
+
+    enum CodingKeys: String, CodingKey {
+        case Translation = "Translations"  // 511.org uses PLURAL!
+    }
+
+    enum SnakeCaseKeys: String, CodingKey {
+        case translation = "translation"  // snake_case (standard GTFS)
+    }
+
+    init(from decoder: Decoder) throws {
+        // Try "Translations" (plural) first - this is what 511.org uses
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            Translation = try? container.decode([GTFSTranslation].self, forKey: .Translation)
+        }
+        // Try snake_case singular
+        else if let container = try? decoder.container(keyedBy: SnakeCaseKeys.self) {
+            Translation = try? container.decode([GTFSTranslation].self, forKey: .translation)
+        } else {
+            Translation = nil
+        }
+    }
 }
 
 struct GTFSTranslation: Codable {
     let Text: String
     let Language: String?
+
+    enum CodingKeys: String, CodingKey {
+        case Text = "Text"  // PascalCase
+        case Language = "Language"
+    }
+
+    enum SnakeCaseKeys: String, CodingKey {
+        case text = "text"  // snake_case
+        case language = "language"
+    }
+
+    init(from decoder: Decoder) throws {
+        // Try PascalCase first
+        if let container = try? decoder.container(keyedBy: CodingKeys.self),
+           let text = try? container.decode(String.self, forKey: .Text) {
+            Text = text
+            Language = try? container.decode(String.self, forKey: .Language)
+        }
+        // Try snake_case
+        else if let container = try? decoder.container(keyedBy: SnakeCaseKeys.self),
+                let text = try? container.decode(String.self, forKey: .text) {
+            Text = text
+            Language = try? container.decode(String.self, forKey: .language)
+        } else {
+            throw DecodingError.keyNotFound(CodingKeys.Text,
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                     debugDescription: "Text field not found in either PascalCase or snake_case format"))
+        }
+    }
 }
 
 // MARK: - SIRI service
@@ -3974,23 +4070,12 @@ struct SIRIService {
             for (index, entity) in alertEntities.enumerated() {
                 guard let alert = entity.Alert else { continue }
 
-                // Dump raw JSON for this entity to see exact field names
-                debugLog("🚨 ===== Alert Entity \(index + 1) =====")
-                if let entityData = try? JSONEncoder().encode(entity),
-                   let entityJSON = String(data: entityData, encoding: .utf8) {
-                    debugLog("🚨 Raw Alert JSON: \(entityJSON)")
-                }
-
                 // Extract header text (summary)
                 let headerText = alert.HeaderText?.Translation?.first?.Text ?? "Service Alert"
-                debugLog("🚨 HeaderText: \(alert.HeaderText != nil ? "present" : "nil")")
-                debugLog("🚨 Translation count: \(alert.HeaderText?.Translation?.count ?? 0)")
-                debugLog("🚨 Alert summary: \(headerText)")
+                debugLog("🚨 Alert \(index + 1): \(headerText)")
 
                 // Extract description text
                 let descriptionText = alert.DescriptionText?.Translation?.first?.Text
-                debugLog("🚨 DescriptionText: \(alert.DescriptionText != nil ? "present" : "nil")")
-                debugLog("🚨 Description: \(descriptionText ?? "nil")")
 
                 // Get active period for creation time
                 var creationTime: Date?
