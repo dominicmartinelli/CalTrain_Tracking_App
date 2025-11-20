@@ -205,10 +205,8 @@ struct RootView: View {
     @StateObject private var notificationManager = SmartNotificationManager.shared
     @State private var tab = 0
     @State private var alerts: [ServiceAlert] = []
-    @State private var delayAlerts: [DelayAlert] = []
     @State private var alertsLoading = false
-    @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
-    @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @State private var alertsError: String? = nil
 
     // Bind cover visibility (true when key is missing)
     private var needsKeyBinding: Binding<Bool> {
@@ -216,7 +214,7 @@ struct RootView: View {
     }
 
     private var totalAlertCount: Int {
-        alerts.count + delayAlerts.count
+        alerts.count
     }
 
     var body: some View {
@@ -227,7 +225,7 @@ struct RootView: View {
             EventsScreen()
                 .tabItem { Label("Events", systemImage: "calendar") }
                 .tag(1)
-            AlertsScreen(alerts: $alerts, delayAlerts: $delayAlerts, isLoading: $alertsLoading)
+            AlertsScreen(alerts: $alerts, isLoading: $alertsLoading, error: $alertsError, onRetry: { Task { await loadAlerts() } })
                 .tabItem {
                     Label("Alerts", systemImage: totalAlertCount == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
@@ -261,148 +259,16 @@ struct RootView: View {
     func loadAlerts() async {
         guard let key = Keychain.shared["api_511"], !key.isEmpty else { return }
         alertsLoading = true
+        alertsError = nil // Clear previous errors
         defer { alertsLoading = false }
         do {
             // Load service alerts
             alerts = try await SIRIService.serviceAlerts(apiKey: key)
-
-            // Load delay predictions
-            await loadDelayPredictions()
-
-            // Send notifications for new delay alerts
-            for delayAlert in delayAlerts {
-                notificationManager.sendDelayPredictionNotification(
-                    trainNumber: delayAlert.trainNumber,
-                    fromStation: delayAlert.fromStation,
-                    toStation: delayAlert.toStation,
-                    departureTime: delayAlert.departureTime,
-                    averageDelay: delayAlert.averageDelay,
-                    confidence: delayAlert.confidence
-                )
-            }
+            alertsError = nil // Clear error on success
         } catch {
-            debugLog("Failed to load alerts: \(error)")
-        }
-    }
-
-    func loadDelayPredictions() async {
-        debugLog("📊 Loading delay predictions...")
-
-        guard let key = Keychain.shared["api_511"], !key.isEmpty else {
-            delayAlerts = []
-            return
-        }
-
-        // Wait 15 seconds to avoid rate limit (Trains screen just loaded and made 2 API calls)
-        // The HTTPClient enforces 5 seconds between requests to the same endpoint
-        try? await Task.sleep(nanoseconds: 15_000_000_000)
-
-        do {
-            // Get northbound departures first
-            debugLog("📊 Fetching northbound departures for delay predictions...")
-            let northDeps = try await SIRIService.nextDepartures(
-                from: northboundStopCode,
-                to: southboundStopCode,
-                at: Date(),
-                apiKey: key,
-                expectedDirection: "N"
-            )
-
-            // Wait additional 5 seconds before southbound call to respect rate limit
-            debugLog("📊 Waiting 5 seconds before southbound request...")
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-
-            debugLog("📊 Fetching southbound departures for delay predictions...")
-            let southDeps = try await SIRIService.nextDepartures(
-                from: southboundStopCode,
-                to: northboundStopCode,
-                at: Date(),
-                apiKey: key,
-                expectedDirection: "S"
-            )
-
-            var newDelayAlerts: [DelayAlert] = []
-
-            let northStop = CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
-            let southStop = CaltrainStops.southbound.first { $0.stopCode == southboundStopCode } ?? CaltrainStops.defaultSouthbound
-
-            // Check northbound departures
-            debugLog("📊 Checking \(northDeps.count) northbound departures for delay predictions")
-            for dep in northDeps {
-                guard let trainNumber = dep.trainNumber,
-                      !trainNumber.isEmpty,
-                      let depTime = dep.depTime else {
-                    debugLog("  ⏭️ Skipping NB dep - trainNumber: \(dep.trainNumber ?? "nil"), depTime: \(dep.depTime?.description ?? "nil")")
-                    continue
-                }
-
-                debugLog("  🔍 Checking NB train \(trainNumber) at stop \(northboundStopCode)")
-                if let prediction = DelayPredictor.shared.predictDelay(
-                    trainNumber: trainNumber,
-                    stopCode: northboundStopCode,
-                    scheduledTime: depTime
-                ) {
-                    debugLog("  📊 Prediction for train \(trainNumber): \(prediction.averageDelay) min, confidence: \(prediction.confidence)")
-                    if prediction.averageDelay >= 3 {
-                        newDelayAlerts.append(DelayAlert(
-                            trainNumber: trainNumber,
-                            fromStation: northStop.name,
-                            toStation: southStop.name,
-                            departureTime: depTime,
-                            averageDelay: prediction.averageDelay,
-                            confidence: prediction.confidence
-                        ))
-                        debugLog("  ✅ Added NB delay alert: Train \(trainNumber) - \(prediction.averageDelay) min late")
-                    } else {
-                        debugLog("  ⏭️ Delay \(prediction.averageDelay) < 3 min threshold")
-                    }
-                } else {
-                    debugLog("  ⏭️ No prediction found for train \(trainNumber)")
-                }
-            }
-
-            // Check southbound departures
-            debugLog("📊 Checking \(southDeps.count) southbound departures for delay predictions")
-            for dep in southDeps {
-                guard let trainNumber = dep.trainNumber,
-                      !trainNumber.isEmpty,
-                      let depTime = dep.depTime else {
-                    debugLog("  ⏭️ Skipping SB dep - trainNumber: \(dep.trainNumber ?? "nil"), depTime: \(dep.depTime?.description ?? "nil")")
-                    continue
-                }
-
-                debugLog("  🔍 Checking SB train \(trainNumber) at stop \(southboundStopCode)")
-                if let prediction = DelayPredictor.shared.predictDelay(
-                    trainNumber: trainNumber,
-                    stopCode: southboundStopCode,
-                    scheduledTime: depTime
-                ) {
-                    debugLog("  📊 Prediction for train \(trainNumber): \(prediction.averageDelay) min, confidence: \(prediction.confidence)")
-                    if prediction.averageDelay >= 3 {
-                        newDelayAlerts.append(DelayAlert(
-                            trainNumber: trainNumber,
-                            fromStation: southStop.name,
-                            toStation: northStop.name,
-                            departureTime: depTime,
-                            averageDelay: prediction.averageDelay,
-                            confidence: prediction.confidence
-                        ))
-                        debugLog("  ✅ Added SB delay alert: Train \(trainNumber) - \(prediction.averageDelay) min late")
-                    } else {
-                        debugLog("  ⏭️ Delay \(prediction.averageDelay) < 3 min threshold")
-                    }
-                } else {
-                    debugLog("  ⏭️ No prediction found for train \(trainNumber)")
-                }
-            }
-
-            debugLog("📊 Total delay alerts found: \(newDelayAlerts.count)")
-            delayAlerts = newDelayAlerts
-            debugLog("📊 Set delayAlerts to \(delayAlerts.count) alerts")
-            debugLog("📊 Total delay alerts: \(delayAlerts.count)")
-        } catch {
-            debugLog("📊 Failed to load delay predictions: \(error)")
-            delayAlerts = []
+            let errorMessage = (error as NSError).localizedDescription
+            alertsError = "Unable to load service alerts: \(errorMessage)"
+            debugLog("❌ Failed to load alerts: \(error)")
         }
     }
 }
@@ -961,30 +827,6 @@ struct SettingsScreen: View {
                     }
                 }
 
-                #if DEBUG
-                Section {
-                    Button("Add Test Delay Data") {
-                        statusTicketmaster = "Generating test data..."
-                        statusTicketmasterColor = .orange
-                        let northCode = northboundStopCode
-                        let southCode = southboundStopCode
-                        Task.detached {
-                            await addTestDelayData(northStopCode: northCode, southStopCode: southCode)
-                        }
-                    }
-                    Button("Clear Delay Data") {
-                        UserDefaults.standard.removeObject(forKey: "delayHistory")
-                        statusTicketmaster = "Delay data cleared"
-                        statusTicketmasterColor = .green
-                    }
-                    .foregroundStyle(.red)
-                } header: {
-                    Text("Debug")
-                } footer: {
-                    Text("Populate fake delay data to test delay predictions")
-                        .font(.caption2)
-                }
-                #endif
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -1051,72 +893,6 @@ struct SettingsScreen: View {
             debugLog("🔑 Ticketmaster verify - EMPTY")
         }
     }
-
-    #if DEBUG
-    private func addTestDelayData(northStopCode: String, southStopCode: String) async {
-        debugLog("🧪 Creating test delay data for ALL trains at current hour")
-        debugLog("🧪 North stop: \(northStopCode), South stop: \(southStopCode)")
-
-        let calendar = Calendar.current
-        let now = Date()
-        let currentHour = calendar.component(.hour, from: now)
-        let currentWeekday = calendar.component(.weekday, from: now)
-        var totalRecords = 0
-
-        // Create test data for many train numbers so any train showing will have predictions
-        // Typical Caltrain trains range from 101-199
-        let allTrains = Array(101...199)
-
-        for trainNum in allTrains {
-            let trainNumStr = String(trainNum)
-
-            // Add records for BOTH stops since we don't know which direction the train is
-            for stopCode in [northStopCode, southStopCode] {
-                // Add 12 historical records for current hour ±1 to get "High" confidence
-                for hourOffset in [-1, 0, 1] {
-                    let targetHour = (currentHour + hourOffset + 24) % 24
-
-                    for i in 0..<4 {  // 4 records per hour = 12 total per train per stop
-                        // Go back by same weekday (7, 14, 21, 28 days) to maintain weekday match
-                        let daysAgo = (i + 1) * 7
-                        guard let recordDate = calendar.date(byAdding: .day, value: -daysAgo, to: now) else { continue }
-
-                        // Use the target hour with random minute
-                        var components = calendar.dateComponents([.year, .month, .day], from: recordDate)
-                        components.hour = targetHour
-                        components.minute = Int.random(in: 0...59)
-                        guard let scheduledTime = calendar.date(from: components) else { continue }
-
-                        // Verify weekday matches (should always be true with 7-day increments)
-                        let recordWeekday = calendar.component(.weekday, from: scheduledTime)
-                        guard recordWeekday == currentWeekday else { continue }
-
-                        // Simulate realistic delays: 3-7 minutes late
-                        let delay = Int.random(in: 3...7)
-
-                        DelayPredictor.shared.recordDelay(
-                            trainNumber: trainNumStr,
-                            stopCode: stopCode,
-                            scheduledTime: scheduledTime,
-                            actualDelay: delay
-                        )
-                        totalRecords += 1
-                    }
-                }
-            }
-        }
-
-        debugLog("✅ Added \(totalRecords) test delay records for trains 101-199")
-        debugLog("🧪 Weekday: \(currentWeekday), Hour: \(currentHour)±1, Both stops")
-        debugLog("📊 Go to Alerts tab to see predictions!")
-
-        // Show success message to user
-        await MainActor.run {
-            statusTicketmaster = "Added \(totalRecords) test delay records"
-            statusTicketmasterColor = .green
-        }
-    }
-    #endif
 }
 
 // MARK: - Theme Selection Screen
@@ -1673,19 +1449,6 @@ struct DepartureRow: View {
     @State private var showShareSheet = false
     @AppStorage("iMessageRecipient") private var iMessageRecipient = ""
 
-    var delayPrediction: (averageDelay: Int, confidence: String)? {
-        guard let trainNumber = dep.trainNumber, let depTime = dep.depTime else {
-            debugLog("⚠️ DepartureRow: No prediction - trainNumber: \(dep.trainNumber ?? "nil"), depTime: \(dep.depTime?.description ?? "nil")")
-            return nil
-        }
-        debugLog("🔎 DepartureRow: Requesting prediction for train \(trainNumber) at stop \(fromStopCode)")
-        let result = DelayPredictor.shared.predictDelay(trainNumber: trainNumber, stopCode: fromStopCode, scheduledTime: depTime)
-        if let r = result {
-            debugLog("✅ DepartureRow: Got prediction - \(r.averageDelay) min (\(r.confidence))")
-        }
-        return result
-    }
-
     var arrivalTime: Date? {
         // Use arrival time from the Departure object if available
         return dep.arrivalTime
@@ -1712,27 +1475,6 @@ struct DepartureRow: View {
                     Text(destinationLabel).font(.subheadline).foregroundStyle(.secondary)
                     if let serviceType = dep.trainNumber, !serviceType.isEmpty {
                         Text("(\(serviceType))").font(.caption).foregroundStyle(.tertiary)
-                    }
-                }
-
-                // Delay prediction
-                if let prediction = delayPrediction, abs(prediction.averageDelay) >= 3 {
-                    HStack(spacing: 3) {
-                        if prediction.averageDelay > 0 {
-                            Image(systemName: "clock.badge.exclamationmark")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                            Text("Usually \(prediction.averageDelay) min late")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        } else {
-                            Image(systemName: "clock.badge.checkmark")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
-                            Text("Usually \(abs(prediction.averageDelay)) min early")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
-                        }
                     }
                 }
             }
@@ -1951,22 +1693,12 @@ struct FullScheduleView: View {
     }
 }
 
-// MARK: - Delay Alert Model
-struct DelayAlert: Identifiable {
-    let id = UUID()
-    let trainNumber: String
-    let fromStation: String
-    let toStation: String
-    let departureTime: Date
-    let averageDelay: Int
-    let confidence: String
-}
-
 // MARK: - Alerts UI
 struct AlertsScreen: View {
     @Binding var alerts: [ServiceAlert]
-    @Binding var delayAlerts: [DelayAlert]
     @Binding var isLoading: Bool
+    @Binding var error: String?
+    var onRetry: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -1976,7 +1708,33 @@ struct AlertsScreen: View {
                         .padding()
                 }
 
-                if alerts.isEmpty && delayAlerts.isEmpty && !isLoading {
+                // Show error message if there's an error
+                if let errorMsg = error, !isLoading {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 80))
+                            .foregroundStyle(.orange)
+
+                        Text("Unable to Load Alerts")
+                            .font(.title)
+                            .fontWeight(.bold)
+
+                        Text(errorMsg)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+
+                        Button(action: onRetry) {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                                .font(.headline)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 8)
+                    }
+                    Spacer()
+                } else if alerts.isEmpty && !isLoading {
                     Spacer()
                     VStack(spacing: 16) {
                         Image(systemName: "checkmark.circle.fill")
@@ -1987,33 +1745,16 @@ struct AlertsScreen: View {
                             .font(.title)
                             .fontWeight(.bold)
 
-                        Text("No active Caltrain service alerts or delay predictions")
+                        Text("No active Caltrain service alerts")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                } else {
+                } else if !isLoading {
                     List {
-                        // Delay Predictions Section
-                        if !delayAlerts.isEmpty {
-                            Section {
-                                ForEach(delayAlerts) { alert in
-                                    DelayAlertRow(alert: alert)
-                                }
-                            } header: {
-                                Label("Predicted Delays", systemImage: "clock.badge.exclamationmark")
-                            }
-                        }
-
                         // Service Alerts Section
-                        if !alerts.isEmpty {
-                            Section {
-                                ForEach(alerts) { alert in
-                                    ServiceAlertRow(alert: alert)
-                                }
-                            } header: {
-                                Label("Service Alerts", systemImage: "exclamationmark.triangle")
-                            }
+                        ForEach(alerts) { alert in
+                            ServiceAlertRow(alert: alert)
                         }
                     }
                     .listStyle(.insetGrouped)
@@ -2029,40 +1770,6 @@ struct AlertsScreen: View {
                 }
             }
         }
-    }
-}
-
-struct DelayAlertRow: View {
-    let alert: DelayAlert
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(.orange)
-                Text("Train \(alert.trainNumber)")
-                    .font(.headline)
-                Spacer()
-                Text(alert.departureTime, style: .time)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("\(alert.fromStation) → \(alert.toStation)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text("Usually \(alert.averageDelay) min late")
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-                Spacer()
-                Text("Confidence: \(alert.confidence)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.vertical, 4)
     }
 }
 
@@ -2696,107 +2403,6 @@ struct CommutePattern: Codable, Identifiable {
     let lastUsed: Date
 }
 
-// MARK: - Delay Prediction
-struct DelayRecord: Codable {
-    let trainNumber: String
-    let stopCode: String
-    let scheduledTime: Date
-    let actualDelay: Int // minutes late (negative = early)
-    let dayOfWeek: Int
-    let hourOfDay: Int
-    let timestamp: Date
-}
-
-class DelayPredictor {
-    static let shared = DelayPredictor()
-    private let delayKey = "delayHistory"
-    #if DEBUG
-    private let maxRecords = 20000 // Higher limit for testing
-    #else
-    private let maxRecords = 500 // Reduced for memory optimization in production
-    #endif
-
-    func recordDelay(trainNumber: String, stopCode: String, scheduledTime: Date, actualDelay: Int) {
-        var records = loadRecords()
-
-        let calendar = Calendar.current
-        let record = DelayRecord(
-            trainNumber: trainNumber,
-            stopCode: stopCode,
-            scheduledTime: scheduledTime,
-            actualDelay: actualDelay,
-            dayOfWeek: calendar.component(.weekday, from: scheduledTime),
-            hourOfDay: calendar.component(.hour, from: scheduledTime),
-            timestamp: Date()
-        )
-
-        records.append(record)
-
-        // Keep only recent records
-        if records.count > maxRecords {
-            records = Array(records.suffix(maxRecords))
-        }
-
-        if let data = try? JSONEncoder().encode(records) {
-            UserDefaults.standard.set(data, forKey: delayKey)
-        }
-    }
-
-    func predictDelay(trainNumber: String, stopCode: String, scheduledTime: Date) -> (averageDelay: Int, confidence: String)? {
-        let records = loadRecords()
-
-        debugLog("📊 Predicting delay for train \(trainNumber) at stop \(stopCode)")
-        debugLog("📊 Total delay records in database: \(records.count)")
-
-        let calendar = Calendar.current
-        let dayOfWeek = calendar.component(.weekday, from: scheduledTime)
-        let hourOfDay = calendar.component(.hour, from: scheduledTime)
-
-        debugLog("📊 Looking for: weekday=\(dayOfWeek), hour=\(hourOfDay)±1")
-
-        // Filter to similar trains (same train number, day of week, and hour)
-        let similarRecords = records.filter {
-            $0.trainNumber == trainNumber &&
-            $0.stopCode == stopCode &&
-            $0.dayOfWeek == dayOfWeek &&
-            abs($0.hourOfDay - hourOfDay) <= 1 // Within 1 hour
-        }
-
-        debugLog("📊 Found \(similarRecords.count) matching records for train \(trainNumber)")
-
-        guard !similarRecords.isEmpty else {
-            debugLog("📊 No prediction available - need more delay history")
-            return nil
-        }
-
-        // Calculate average delay
-        let totalDelay = similarRecords.reduce(0) { $0 + $1.actualDelay }
-        let averageDelay = totalDelay / similarRecords.count
-
-        // Determine confidence based on sample size
-        let confidence: String
-        if similarRecords.count >= 10 {
-            confidence = "High"
-        } else if similarRecords.count >= 5 {
-            confidence = "Medium"
-        } else {
-            confidence = "Low"
-        }
-
-        debugLog("📊 Prediction: \(averageDelay) min delay (confidence: \(confidence), samples: \(similarRecords.count))")
-
-        return (averageDelay: averageDelay, confidence: confidence)
-    }
-
-    private func loadRecords() -> [DelayRecord] {
-        guard let data = UserDefaults.standard.data(forKey: delayKey),
-              let records = try? JSONDecoder().decode([DelayRecord].self, from: data) else {
-            return []
-        }
-        return records
-    }
-}
-
 // MARK: - Theme System
 enum AppTheme: String, Codable, CaseIterable, Identifiable {
     case vintage = "Vintage"
@@ -3249,22 +2855,6 @@ class SmartNotificationManager: NSObject, ObservableObject, UNUserNotificationCe
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: "alert-\(alert.id)", content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request)
-    }
-
-    // Send notification for delay predictions
-    func sendDelayPredictionNotification(trainNumber: String, fromStation: String, toStation: String, departureTime: Date, averageDelay: Int, confidence: String) {
-        guard notificationsEnabled else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = "Train \(trainNumber) Usually Delayed"
-        content.body = "Train \(trainNumber) from \(fromStation) to \(toStation) at \(departureTime.formatted(date: .omitted, time: .shortened)) is usually \(averageDelay) min late (\(confidence) confidence)"
-        content.sound = .default
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: "delayPrediction-\(trainNumber)-\(departureTime.timeIntervalSince1970)", content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
-
-        debugLog("🔔 Sent delay prediction notification for train \(trainNumber)")
     }
 
     // UNUserNotificationCenterDelegate methods
@@ -4276,6 +3866,65 @@ struct AlertsPtSituationElement: Decodable {
     let Severity: String?
 }
 
+// MARK: - GTFS Realtime Service Alerts models
+struct GTFSRealtimeResponse: Codable {
+    let Header: GTFSHeader
+    let Entities: [GTFSEntity]?
+}
+
+struct GTFSHeader: Codable {
+    let GtfsRealtimeVersion: String?
+    let incrementality: Int?
+    let Timestamp: Int?
+}
+
+struct GTFSEntity: Codable {
+    let Id: String
+    let TripUpdate: GTFSTripUpdate?
+    let Vehicle: GTFSVehicle?
+    let Alert: GTFSAlert?
+}
+
+struct GTFSTripUpdate: Codable {
+    // Placeholder - not used for alerts
+}
+
+struct GTFSVehicle: Codable {
+    // Placeholder - not used for alerts
+}
+
+struct GTFSAlert: Codable {
+    let ActivePeriod: [GTFSTimePeriod]?
+    let InformedEntity: [GTFSInformedEntity]?
+    let Cause: String?
+    let Effect: String?
+    let Url: GTFSTranslatedString?
+    let HeaderText: GTFSTranslatedString?
+    let DescriptionText: GTFSTranslatedString?
+    let Severity: String?
+}
+
+struct GTFSTimePeriod: Codable {
+    let Start: Int?
+    let End: Int?
+}
+
+struct GTFSInformedEntity: Codable {
+    let AgencyId: String?
+    let RouteId: String?
+    let RouteType: Int?
+    let StopId: String?
+}
+
+struct GTFSTranslatedString: Codable {
+    let Translation: [GTFSTranslation]?
+}
+
+struct GTFSTranslation: Codable {
+    let Text: String
+    let Language: String?
+}
+
 // MARK: - SIRI service
 struct SIRIService {
     static func serviceAlerts(apiKey: String) async throws -> [ServiceAlert] {
@@ -4302,38 +3951,69 @@ struct SIRIService {
                           userInfo: [NSLocalizedDescriptionKey: userMessage])
         }
 
+        // Log raw response for debugging
+        if let rawString = String(data: raw, encoding: .utf8) {
+            debugLog("🚨 Raw response length: \(rawString.count) characters")
+            debugLog("🚨 Response preview: \(String(rawString.prefix(200)))")
+        }
+
         let cleaned = String(data: raw, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) ?? raw
 
         do {
-            let env = try JSONDecoder().decode(AlertsEnvelope.self, from: cleaned)
-            let sd = env.Siri?.ServiceDelivery ?? env.ServiceDelivery
-            let situations = sd?.SituationExchangeDelivery?.first?.Situations?.PtSituationElement ?? []
-            debugLog("🚨 Found \(situations.count) service alert situations")
+            // Parse GTFS Realtime format
+            let gtfsResponse = try JSONDecoder().decode(GTFSRealtimeResponse.self, from: cleaned)
+            debugLog("🚨 GTFS Realtime version: \(gtfsResponse.Header.GtfsRealtimeVersion ?? "unknown")")
+            debugLog("🚨 Found \(gtfsResponse.Entities?.count ?? 0) entities")
 
-            let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let df = ISO8601DateFormatter()
+            let entities = gtfsResponse.Entities ?? []
+            let alertEntities = entities.filter { $0.Alert != nil }
+            debugLog("🚨 Found \(alertEntities.count) alert entities")
 
             var alerts: [ServiceAlert] = []
-            for sit in situations {
-                let creationTime = sit.CreationTime.flatMap { dfFrac.date(from: $0) ?? df.date(from: $0) }
-                let summary = sit.Summary ?? "Service Alert"
-                debugLog("🚨 Alert: \(summary)")
-                let alert = ServiceAlert(
-                    id: sit.SituationNumber ?? UUID().uuidString,
-                    summary: summary,
-                    description: sit.Description,
-                    severity: sit.Severity,
+            for (index, entity) in alertEntities.enumerated() {
+                guard let alert = entity.Alert else { continue }
+
+                // Dump raw JSON for this entity to see exact field names
+                debugLog("🚨 ===== Alert Entity \(index + 1) =====")
+                if let entityData = try? JSONEncoder().encode(entity),
+                   let entityJSON = String(data: entityData, encoding: .utf8) {
+                    debugLog("🚨 Raw Alert JSON: \(entityJSON)")
+                }
+
+                // Extract header text (summary)
+                let headerText = alert.HeaderText?.Translation?.first?.Text ?? "Service Alert"
+                debugLog("🚨 HeaderText: \(alert.HeaderText != nil ? "present" : "nil")")
+                debugLog("🚨 Translation count: \(alert.HeaderText?.Translation?.count ?? 0)")
+                debugLog("🚨 Alert summary: \(headerText)")
+
+                // Extract description text
+                let descriptionText = alert.DescriptionText?.Translation?.first?.Text
+                debugLog("🚨 DescriptionText: \(alert.DescriptionText != nil ? "present" : "nil")")
+                debugLog("🚨 Description: \(descriptionText ?? "nil")")
+
+                // Get active period for creation time
+                var creationTime: Date?
+                if let start = alert.ActivePeriod?.first?.Start {
+                    creationTime = Date(timeIntervalSince1970: TimeInterval(start))
+                }
+
+                let serviceAlert = ServiceAlert(
+                    id: entity.Id,
+                    summary: headerText,
+                    description: descriptionText,
+                    severity: alert.Severity,
                     creationTime: creationTime
                 )
-                alerts.append(alert)
+                alerts.append(serviceAlert)
             }
+
             debugLog("🚨 Returning \(alerts.count) service alerts")
             return alerts
         } catch {
             debugLog("🚨 Failed to decode alerts: \(error)")
             // Security: Don't expose parsing details to users
-            throw NSError(domain: "SIRI-SX.decode", code: 0,
+            throw NSError(domain: "GTFS.decode", code: 0,
                           userInfo: [NSLocalizedDescriptionKey: "Unable to process service alerts. Please try again later."])
         }
     }
