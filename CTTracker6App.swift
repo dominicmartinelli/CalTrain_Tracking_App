@@ -219,7 +219,7 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            TrainsScreen(sharedAlerts: $alerts)
+            TrainsScreen(sharedAlerts: $alerts, selectedTab: $tab)
                 .tabItem { Label("Trains", systemImage: "train.side.front.car") }
                 .tag(0)
             EventsScreen()
@@ -1011,6 +1011,7 @@ struct AboutScreen: View {
 // MARK: - Trains UI
 struct TrainsScreen: View {
     @Binding var sharedAlerts: [ServiceAlert]
+    @Binding var selectedTab: Int
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @State private var refDate = Date()
@@ -1068,12 +1069,24 @@ struct TrainsScreen: View {
                 List {
                     if !sharedAlerts.isEmpty {
                         Section {
-                            ForEach(sharedAlerts) { alert in
-                                ServiceAlertRow(alert: alert)
+                            Button {
+                                selectedTab = 2 // Navigate to Alerts tab
+                            } label: {
+                                HStack {
+                                    Label("Service Alerts", systemImage: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                        .font(.headline)
+                                    Spacer()
+                                    Text("\(sharedAlerts.count) alert\(sharedAlerts.count == 1 ? "" : "s")")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 8)
                             }
-                        } header: {
-                            Label("Service Alerts", systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
+                            .buttonStyle(.plain)
                         }
                     }
 
