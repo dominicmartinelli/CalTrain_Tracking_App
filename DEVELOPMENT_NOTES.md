@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Single-file SwiftUI iOS app for tracking Caltrain departures with real-time data, delay predictions, and Bay Area events.
+Single-file SwiftUI iOS app for tracking Caltrain departures with real-time data, service alerts, and Bay Area events.
 
-**Main File:** `CTTracker6App.swift` (~4100 lines)
+**Main File:** `CTTracker6App.swift` (~4200 lines)
 
 ## Architecture
 
@@ -14,9 +14,9 @@ Single-file SwiftUI iOS app for tracking Caltrain departures with real-time data
    - Custom pure-Swift ZIP extractor (iOS compatible)
    - 24-hour cache with automatic refresh
 
-2. **SIRI API (511.org)**
-   - Real-time train numbers from VehicleRef
-   - Service types and delays
+2. **511.org Transit API**
+   - **SIRI format:** Real-time train numbers from VehicleRef, service types
+   - **GTFS Realtime format:** Service alerts with non-standard field naming
    - **Note:** OnwardCalls NOT supported by API despite parameter
 
 3. **Open-Meteo API** (Free, no key)
@@ -43,12 +43,15 @@ Single-file SwiftUI iOS app for tracking Caltrain departures with real-time data
 - Finds arrival at destination stop from schedule
 - Uses `departureTime` field (arrivalTime doesn't exist in GTFSStopTime)
 
-#### Delay Prediction Engine
-- **Pattern matching:** train number, stop code, weekday, hour (±1)
-- **Storage:** UserDefaults JSON encoded
-- **Limits:** 500 records (production), 20,000 (DEBUG)
-- **Confidence:** High (≥10), Medium (≥5), Low (<5)
-- **Privacy-first:** All data local, never uploaded
+#### Service Alerts (GTFS Realtime)
+- **Format:** 511.org uses non-standard GTFS Realtime JSON
+- **Field naming quirks:**
+  - "Translations" (plural) not "Translation"
+  - "ActivePeriods" and "InformedEntities" (plural)
+  - "cause" and "effect" (lowercase, not PascalCase)
+- **Parsing strategy:** Flexible CodingKeys with both naming conventions
+- **Data extracted:** Header, description, severity, active periods
+- **Display:** Dedicated Alerts tab + tappable banner on Trains screen
 
 ## Critical Bug Fixes
 
@@ -89,48 +92,30 @@ try? await Task.sleep(nanoseconds: 5_000_000_000)
 **Fix:** Limit to 50 entries, auto-cleanup
 ```swift
 if lastRequestTime.count > maxCachedEndpoints {
-    lastRequestTime = Dictionary(uniqueKeysWithValues: Array(sorted.suffix(50)))
+    let oldest = lastRequestTime.min(by: { $0.value < $1.value })?.key
+    if let key = oldest { lastRequestTime.removeValue(forKey: key) }
 }
 ```
 
-### 6. Test Data Generation Issues
+### 6. Service Alerts Parsing (November 2025)
+**Problem:** 511.org service alerts not displaying text - showed only "Service Alert"
+**Root cause:** API uses non-standard GTFS Realtime field names
+- "Translations" (PLURAL) instead of "Translation"
+- "ActivePeriods" and "InformedEntities" (PLURAL)
+- "cause" and "effect" (lowercase)
 
-#### Memory Bloat (8,484 records → 2,376 records)
-**Problem:** Creating test data for every train × 7 hours
-**Fix:** Current hour ±1 only, both stops
-
-#### Weekday Mismatch
-**Problem:** Going back random weeks changed weekday
-**Fix:** Use 7-day increments (7, 14, 21, 28 days)
+**Fix:** Added flexible CodingKeys to handle both naming conventions
 ```swift
-let daysAgo = (i + 1) * 7  // Preserves weekday
-```
-
-#### Train Number Mismatch
-**Problem:** Hardcoded trains didn't match actual trains showing
-**Fix:** Generate for all trains 101-199
-
-#### UI Freeze on Physical Device
-**Problem:** UserDefaults writes blocking main thread
-**Fix:** Async with Task.detached
-```swift
-Task.detached {
-    await addTestDelayData(northStopCode: northCode, southStopCode: southCode)
+enum CodingKeys: String, CodingKey {
+    case Translation = "Translations"  // 511.org uses PLURAL!
 }
 ```
 
-## Debug Tools (DEBUG builds only)
-
-### Add Test Delay Data
-- Creates ~2,376 records
-- Covers trains 101-199
-- Current hour ±1, same weekday
-- Both northbound and southbound stops
-- Async execution (no UI freeze)
-
-### Clear Delay Data
-- Removes `delayHistory` key from UserDefaults
-- Use before regenerating test data
+**Investigation process:**
+1. Added debug logging to dump full JSON response
+2. Discovered HeaderText/DescriptionText had empty `{}` objects
+3. Found actual data in "Translations" (plural) nested array
+4. Updated all GTFS Realtime models with correct field names
 
 ## Security Features
 
@@ -143,18 +128,19 @@ Task.detached {
 ## Performance Optimizations
 
 - **@MainActor:** For WeatherService and other ObservableObjects
-- **Memory limits:** DelayPredictor maxRecords cap
-- **HTTPClient cache:** Bounded dictionary (50 entries)
+- **HTTPClient cache:** Bounded dictionary with O(1) cleanup
 - **Async operations:** Heavy tasks off main thread
+- **Code reduction:** Removed delay prediction engine (~400 lines)
+- **Debug logging:** Conditional compilation with debugLog()
 
 ## Common Issues & Solutions
 
-### "No predictions found"
+### Service alerts not showing text
 **Check:**
-1. Test data weekday matches current weekday?
-2. Test data hour matches train departure hour ±1?
-3. Stop codes correct for direction?
-4. Train numbers match actual trains (101-199)?
+1. Debug logs show "Translations" count > 0?
+2. GTFS Realtime models using correct field names?
+3. API returning non-empty HeaderText/DescriptionText?
+4. Check console for "🚨 FULL RESPONSE:" to see actual JSON
 
 ### "429 Too many requests"
 **Check:**
@@ -187,13 +173,16 @@ https://api.511.org/transit/StopMonitoring
 &MaximumNumberOfCallsOnwards=20  // Not supported by API
 ```
 
-### Service Alerts
+### Service Alerts (GTFS Realtime)
 ```
 https://api.511.org/transit/servicealerts
 ?api_key={key}
 &agency=CT
 &format=json
 ```
+**Returns:** GTFS Realtime JSON with non-standard field names
+- "Translations" (plural), "ActivePeriods" (plural)
+- Mixed case: PascalCase for most fields, lowercase for "cause"/"effect"
 
 ### GTFS Feed
 ```
@@ -237,65 +226,64 @@ CalTrain_Tracking_App/
 ### Models
 - `Departure` - Train departure info
 - `ServiceAlert` - Caltrain service disruption
-- `DelayRecord` - Historical delay data point
 - `CaltrainStop` - Station with coordinates
 - `GTFSTrip`, `GTFSStopTime`, `GTFSCalendar`, etc.
+- `GTFSRealtimeResponse`, `GTFSAlert`, `GTFSTranslatedString` - GTFS Realtime alerts
 
 ### Services (Actors/Classes)
-- `SIRIService` - Real-time train data
+- `SIRIService` - Real-time train data + service alerts parsing
 - `GTFSService` - Static schedule data
-- `DelayPredictor` - ML-based delay predictions
 - `HTTPClient` - Rate-limited network client
 - `WeatherService` - Destination weather
 - `TicketmasterService` - Bay Area events
 - `SmartNotificationManager` - Push notifications
 
 ### Views
-- `TrainsScreen` - Main departure list
+- `TrainsScreen` - Main departure list with alerts banner
 - `EventsScreen` - Bay Area events browser
-- `AlertsScreen` - Service alerts + delay predictions
-- `InsightsScreen` - Streaks, achievements, CO₂
+- `AlertsScreen` - Service alerts display
+- `InsightsView` - Streaks, achievements, CO₂
 - `StationsScreen` - Route selection
-- `SettingsScreen` - API keys, themes, debug tools
+- `SettingsScreen` - API keys, themes
 
 ## Testing Tips
 
-1. **Use DEBUG mode** for test data generation
-2. **Clear data first** before regenerating
-3. **Check console logs** for detailed debugging
-4. **Verify weekday/hour** matches test data
-5. **Test on physical device** for real performance
-6. **Monitor memory** with Xcode Instruments
+1. **Check console logs** for detailed debugging
+2. **Test on physical device** for real performance
+3. **Monitor memory** with Xcode Instruments
+4. **Use debugLog()** for conditional debug output
+5. **Test service alerts** when Caltrain posts disruptions
+6. **Verify GTFS Realtime parsing** with full JSON logging
 
 ## Known Limitations
 
 1. **SIRI OnwardCalls not supported** - Must use GTFS for arrivals
 2. **Rate limiting strict** - 5s minimum between calls
 3. **GTFS cache 24hr** - Updates once per day
-4. **Delay predictions local only** - No cloud sync
-5. **Weather at destination only** - Not departure station
+4. **Weather at destination only** - Not departure station
+5. **511.org non-standard GTFS Realtime** - Custom field names require special parsing
 
 ## Future Enhancements (Ideas)
 
 - [ ] Widget for next departure
 - [ ] Apple Watch complications
 - [ ] Siri shortcuts integration
-- [ ] Push notifications for delays
 - [ ] Share routes with friends
-- [ ] Historical delay trends chart
 - [ ] Bike car availability indicator
 - [ ] Crowding predictions (ML)
+- [ ] Real-time train tracking on map
+- [ ] Push notifications for service alerts
 
 ## Git Repository
 
 **URL:** https://github.com/dominicmartinelli/CalTrain_Tracking_App
 
-### Recent Commits
-- Fix delay prediction test data generation
-- Update README with optimized debug test data details
-- Add arrival time calculation from GTFS
-- Fix keychain race condition
-- Optimize memory usage for delay predictions
+### Recent Commits (November 2025)
+- Fix service alerts parsing - 511.org uses 'Translations' (plural)
+- Replace inline service alerts with navigation link on Trains screen
+- Add diagnostic logging for service alerts text extraction
+- Fix critical bugs and add comprehensive TODO tracking
+- Remove delay prediction engine (~400 lines simplified)
 
 ## Development Environment
 
@@ -313,4 +301,4 @@ Created for personal use. For issues or questions, see GitHub issues.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
-Last updated: 2025-10-11
+Last updated: 2025-11-19
