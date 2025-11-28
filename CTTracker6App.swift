@@ -1260,7 +1260,8 @@ struct TrainsScreen: View {
                             direction: dep.direction,
                             destination: dep.destination,
                             trainNumber: dep.trainNumber,
-                            arrivalTime: arrivalTime
+                            arrivalTime: arrivalTime,
+                            delayMinutes: dep.delayMinutes
                         ))
                     } else {
                         northWithArrival.append(dep)
@@ -1290,7 +1291,8 @@ struct TrainsScreen: View {
                             direction: dep.direction,
                             destination: dep.destination,
                             trainNumber: dep.trainNumber,
-                            arrivalTime: arrivalTime
+                            arrivalTime: arrivalTime,
+                            delayMinutes: dep.delayMinutes
                         ))
                     } else {
                         southWithArrival.append(dep)
@@ -1303,11 +1305,13 @@ struct TrainsScreen: View {
 
             debugLog("📋 Merged Northbound departures:")
             for (i, dep) in north.enumerated() {
-                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
+                let delayStr = dep.delayMinutes.map { "\($0 > 0 ? "+" : "")\($0) min" } ?? "n/a"
+                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil"), Delay: \(delayStr)")
             }
             debugLog("📋 Merged Southbound departures:")
             for (i, dep) in south.enumerated() {
-                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil")")
+                let delayStr = dep.delayMinutes.map { "\($0 > 0 ? "+" : "")\($0) min" } ?? "n/a"
+                debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil"), Delay: \(delayStr)")
             }
 
             // Don't fetch alerts here - use shared alerts from main app to avoid duplicate API calls
@@ -1552,12 +1556,42 @@ struct DepartureRow: View {
                 .buttonStyle(.plain)
             }
 
-            VStack(alignment: .trailing) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text("\(dep.minutes)m").font(.title3).monospacedDigit()
+
+                // Display delay information if available
+                if let delay = dep.delayMinutes {
+                    if delay > 0 {
+                        Text("+\(delay) min")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .bold()
+                    } else if delay < 0 {
+                        Text("\(delay) min")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("On time")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Departure in \(dep.minutes) minutes to \(destinationLabel)")
+        .accessibilityLabel({
+            var label = "Departure in \(dep.minutes) minutes to \(destinationLabel)"
+            if let delay = dep.delayMinutes {
+                if delay > 0 {
+                    label += ", delayed \(delay) minutes"
+                } else if delay < 0 {
+                    label += ", running \(abs(delay)) minutes early"
+                } else {
+                    label += ", on time"
+                }
+            }
+            return label
+        }())
         .sheet(isPresented: $showMessageComposer) {
             MessageComposer(
                 recipients: [iMessageRecipient],
@@ -2317,6 +2351,7 @@ struct Departure: Identifiable, Hashable {
     let destination: String?
     let trainNumber: String?
     let arrivalTime: Date?
+    let delayMinutes: Int? // positive = late, negative = early, nil = no real-time data
 }
 
 struct ServiceAlert: Identifiable, Hashable {
@@ -3629,7 +3664,8 @@ actor GTFSService {
                 direction: direction == 0 ? "North" : "South",
                 destination: destination,
                 trainNumber: nil, // Will be filled with service type from SIRI if available
-                arrivalTime: nil // Will be filled from SIRI OnwardCalls if available
+                arrivalTime: nil, // Will be filled from SIRI OnwardCalls if available
+                delayMinutes: nil // Static GTFS data doesn't include real-time delays
             )
         }
     }
@@ -3834,6 +3870,7 @@ struct MonitoredVehicleJourneyNode: Decodable {
 struct FramedVehicleJourneyRefNode: Decodable { let DatedVehicleJourneyRef: String? }
 struct MonitoredCallNode: Decodable {
     let AimedDepartureTime: String?
+    let ExpectedDepartureTime: String?
 }
 
 struct OnwardCallNode: Decodable {
@@ -4167,13 +4204,23 @@ struct SIRIService {
         for v in visits {
             let mvj = v.MonitoredVehicleJourney
             let aimed = mvj.MonitoredCall?.AimedDepartureTime
+            let expected = mvj.MonitoredCall?.ExpectedDepartureTime
             let date = aimed.flatMap { dfFrac.date(from: $0) ?? df.date(from: $0) }
             // Calculate minutes, rounding up (ceiling) so a train in 30 seconds shows as 1m
             let minutes = date.map { Int(ceil($0.timeIntervalSince(now) / 60)) } ?? 0
             let direction = mvj.DirectionRef
 
+            // Calculate delay: ExpectedDepartureTime - AimedDepartureTime
+            var delayMinutes: Int? = nil
+            if let aimedStr = aimed, let expectedStr = expected {
+                if let aimedDate = dfFrac.date(from: aimedStr) ?? df.date(from: aimedStr),
+                   let expectedDate = dfFrac.date(from: expectedStr) ?? df.date(from: expectedStr) {
+                    delayMinutes = Int(round((expectedDate.timeIntervalSince(aimedDate)) / 60))
+                }
+            }
+
             // Debug: Print all available fields
-            debugLog("  🚂 Dir: \(direction ?? "?"), Aimed: \(aimed ?? "nil"), Minutes: \(minutes), Dest: \(mvj.DestinationName ?? "nil")")
+            debugLog("  🚂 Dir: \(direction ?? "?"), Aimed: \(aimed ?? "nil"), Expected: \(expected ?? "nil"), Minutes: \(minutes), Delay: \(delayMinutes?.description ?? "n/a"), Dest: \(mvj.DestinationName ?? "nil")")
             debugLog("     LineRef: \(mvj.LineRef ?? "nil")")
             debugLog("     PublishedLineName: \(mvj.PublishedLineName ?? "nil")")
             debugLog("     VehicleRef: \(mvj.VehicleRef ?? "nil")")
@@ -4218,7 +4265,8 @@ struct SIRIService {
                 minutes: minutes, depTime: date,
                 direction: mvj.DirectionRef, destination: mvj.DestinationName,
                 trainNumber: trainNumber,
-                arrivalTime: arrivalTime
+                arrivalTime: arrivalTime,
+                delayMinutes: delayMinutes
             )
             // Only include future departures (at least 1 minute away)
             if minutes > 0 { out.append(dep) }
