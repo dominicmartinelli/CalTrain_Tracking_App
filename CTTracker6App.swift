@@ -1969,12 +1969,26 @@ struct EventsScreen: View {
             #endif
         } else {
             largeEvents = events.filter { event in
-                // Always include Chase Center events (18,064 capacity)
-                if let venueName = event.venueName, venueName.lowercased().contains("chase center") {
-                    #if !DEBUG
-                    debugLog("🎟️ Event '\(event.name)' included: Chase Center (always shown)")
-                    #endif
-                    return true
+                // Always include major Bay Area sports venues that impact Caltrain
+                if let venueName = event.venueName {
+                    let lowerName = venueName.lowercased()
+
+                    // Major venues to always show (regardless of capacity threshold)
+                    let majorVenues = [
+                        "chase center",      // Warriors (18,064) - near 4th & King
+                        "levi's stadium",    // 49ers (68,500) - near Great America
+                        "oracle park",       // Giants (41,915) - near 4th & King
+                        "sap center"         // Sharks (17,562) - near Diridon
+                    ]
+
+                    for venue in majorVenues {
+                        if lowerName.contains(venue) {
+                            #if !DEBUG
+                            debugLog("🎟️ Event '\(event.name)' included: Major venue '\(venueName)' (always shown)")
+                            #endif
+                            return true
+                        }
+                    }
                 }
 
                 guard let capacity = event.venueCapacity else {

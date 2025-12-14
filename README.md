@@ -32,12 +32,16 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 ### 🎟️ Bay Area Events
 - **Date picker** - browse events for today or any future date
 - **Smart filtering** - show all venues or only large venues (20,000+ capacity)
-  - Chase Center events always included (18,064 capacity, home of Golden State Warriors)
+  - Major sports venues always included regardless of capacity:
+    - Chase Center (Warriors, 18,064)
+    - Levi's Stadium (49ers, 68,500)
+    - Oracle Park (Giants, 41,915)
+    - SAP Center (Sharks, 17,562)
 - **Station-based search** - filter by "All Stations" or specific Caltrain station
 - **Adjustable distance radius** - 0.5 to 10 miles from selected station(s)
 - Powered by Ticketmaster Discovery API
 - Event details include venue, time, ticket links, and nearest Caltrain station
-- Covers concerts, sports (including Warriors and Giants games), theater, and more
+- Covers concerts, sports (including Warriors, 49ers, Giants, and Sharks games), theater, and more
 - Perfect for planning weekend trips or finding events near your commute
 
 ### 🚨 Service Alerts
