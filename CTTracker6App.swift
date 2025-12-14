@@ -1974,20 +1974,22 @@ struct EventsScreen: View {
                     let lowerName = venueName.lowercased()
 
                     // Major venues to always show (regardless of capacity threshold)
-                    let majorVenues = [
-                        "chase center",      // Warriors (18,064) - near 4th & King
-                        "levi's stadium",    // 49ers (68,500) - near Great America
-                        "oracle park",       // Giants (41,915) - near 4th & King
-                        "sap center"         // Sharks (17,562) - near Diridon
-                    ]
-
-                    for venue in majorVenues {
-                        if lowerName.contains(venue) {
-                            #if !DEBUG
-                            debugLog("🎟️ Event '\(event.name)' included: Major venue '\(venueName)' (always shown)")
-                            #endif
-                            return true
-                        }
+                    // Check for partial matches to handle different name formats
+                    if lowerName.contains("chase center") {
+                        debugLog("🎟️ Event '\(event.name)' included: Chase Center (Warriors, always shown)")
+                        return true
+                    }
+                    if lowerName.contains("levi") && lowerName.contains("stadium") {
+                        debugLog("🎟️ Event '\(event.name)' included: Levi's Stadium (49ers, always shown)")
+                        return true
+                    }
+                    if lowerName.contains("oracle park") {
+                        debugLog("🎟️ Event '\(event.name)' included: Oracle Park (Giants, always shown)")
+                        return true
+                    }
+                    if lowerName.contains("sap center") {
+                        debugLog("🎟️ Event '\(event.name)' included: SAP Center (Sharks, always shown)")
+                        return true
                     }
                 }
 
