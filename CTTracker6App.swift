@@ -698,6 +698,34 @@ struct SettingsScreen: View {
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
     @AppStorage("iMessageRecipient") private var iMessageRecipient = ""
+    @State private var iMessageValidationMessage: String = ""
+    @State private var iMessageValidationColor: Color = .secondary
+
+    // Validate phone number or email format
+    private func validateRecipient(_ recipient: String) -> (valid: Bool, message: String) {
+        let trimmed = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Empty is valid (optional field)
+        if trimmed.isEmpty {
+            return (true, "")
+        }
+
+        // Check if it's a valid phone number (digits only, optionally with +, -, (), spaces)
+        let phonePattern = "^[+]?[(]?[0-9]{1,4}[)]?[-\\s.]?[(]?[0-9]{1,4}[)]?[-\\s.]?[0-9]{1,9}$"
+        let phoneTest = NSPredicate(format: "SELF MATCHES %@", phonePattern)
+
+        // Check if it's a valid email
+        let emailPattern = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailTest = NSPredicate(format: "SELF MATCHES %@", emailPattern)
+
+        if phoneTest.evaluate(with: trimmed) {
+            return (true, "✓ Valid phone number")
+        } else if emailTest.evaluate(with: trimmed) {
+            return (true, "✓ Valid email address")
+        } else {
+            return (false, "⚠️ Please enter a valid phone number or email")
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -727,13 +755,25 @@ struct SettingsScreen: View {
                 }
 
                 Section {
-                    TextField("Phone Number", text: $iMessageRecipient)
+                    TextField("Phone Number or Email", text: $iMessageRecipient)
                         .textContentType(.telephoneNumber)
-                        .keyboardType(.phonePad)
+                        .keyboardType(.default)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onChange(of: iMessageRecipient) { _, newValue in
+                            let validation = validateRecipient(newValue)
+                            iMessageValidationMessage = validation.message
+                            iMessageValidationColor = validation.valid ? .green : .orange
+                        }
+                    if !iMessageValidationMessage.isEmpty {
+                        Text(iMessageValidationMessage)
+                            .font(.caption)
+                            .foregroundStyle(iMessageValidationColor)
+                    }
                 } header: {
                     Text("iMessage Sharing")
                 } footer: {
-                    Text("Enter a phone number to quickly share train arrival times via iMessage from the Trains tab")
+                    Text("Enter a phone number or email to quickly share train arrival times via iMessage from the Trains tab")
                         .font(.caption2)
                 }
 
@@ -842,6 +882,11 @@ struct SettingsScreen: View {
                 apiKeyTicketmaster = Keychain.shared["api_ticketmaster"] ?? ""
                 verify511()
                 verifyTicketmaster()
+
+                // Validate iMessage recipient on load
+                let validation = validateRecipient(iMessageRecipient)
+                iMessageValidationMessage = validation.message
+                iMessageValidationColor = validation.valid ? .green : .orange
             }
         }
     }
@@ -3621,12 +3666,14 @@ actor GTFSService {
                   let hours = Int(timeComponents[0]),
                   let minutes = Int(timeComponents[1]) else { continue }
 
-            var totalMinutes = hours * 60 + minutes
             var departureDate = targetDate
+            var actualHours = hours
+            var totalMinutes = hours * 60 + minutes
 
-            // Handle times >= 24:00:00 (next day)
+            // Handle times >= 24:00:00 (next day in GTFS format)
             if hours >= 24 {
-                totalMinutes = (hours - 24) * 60 + minutes
+                actualHours = hours - 24
+                totalMinutes = actualHours * 60 + minutes
                 guard let nextDay = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) else {
                     continue
                 }
@@ -3638,15 +3685,18 @@ actor GTFSService {
                 continue // Skip trains before selected time
             }
 
-            // Calculate minutes until departure from NOW
-            var minutesUntil: Int
-            if isNextDay {
-                // Tomorrow's train: minutes from now = (24*60 - nowMinutes) + totalMinutes
-                minutesUntil = (24 * 60 - nowMinutes) + totalMinutes
-            } else {
-                // Today's train
-                minutesUntil = totalMinutes - nowMinutes
+            // Create full departure Date using Calendar API
+            guard let fullDepDate = pacificCalendar.date(
+                bySettingHour: actualHours,
+                minute: minutes,
+                second: 0,
+                of: departureDate
+            ) else {
+                continue
             }
+
+            // Calculate minutes until departure from NOW using proper Date comparison
+            let minutesUntil = Int(ceil(fullDepDate.timeIntervalSince(now) / 60))
 
             departures.append((st.departureTime, minutesUntil, st.tripId, departureDate))
         }
@@ -3681,8 +3731,19 @@ actor GTFSService {
 
                     // Handle both regular and GTFS 24+ time format
                     let actualHours = hours >= 24 ? hours - 24 : hours
-                    let totalMinutes = actualHours * 60 + minutes
-                    let minutesUntilFromNow = (24 * 60 - nowMinutes) + totalMinutes // Minutes from now until tomorrow's train
+
+                    // Create full departure Date using Calendar API
+                    guard let fullDepDate = pacificCalendar.date(
+                        bySettingHour: actualHours,
+                        minute: minutes,
+                        second: 0,
+                        of: tomorrow
+                    ) else {
+                        continue
+                    }
+
+                    // Calculate minutes until departure from NOW using proper Date comparison
+                    let minutesUntilFromNow = Int(ceil(fullDepDate.timeIntervalSince(now) / 60))
                     departures.append((st.departureTime, minutesUntilFromNow, st.tripId, tomorrow))
                 }
             }
@@ -4285,9 +4346,23 @@ struct SIRIService {
 
             // Filter by direction if we have an expected direction
             if let expected = expectedDirection, let dir = direction {
-                // Flexible matching: "N" matches "N", "North", "NB", etc.
-                let matches = (expected.uppercased() == "N" && dir.uppercased().starts(with: "N")) ||
-                             (expected.uppercased() == "S" && dir.uppercased().starts(with: "S"))
+                // Whitelist of valid northbound and southbound direction strings
+                let northboundDirections = ["N", "NORTH", "NB", "NORTHBOUND"]
+                let southboundDirections = ["S", "SOUTH", "SB", "SOUTHBOUND"]
+
+                let expectedUpper = expected.uppercased()
+                let dirUpper = dir.uppercased()
+
+                let matches: Bool
+                if northboundDirections.contains(expectedUpper) {
+                    matches = northboundDirections.contains(dirUpper)
+                } else if southboundDirections.contains(expectedUpper) {
+                    matches = southboundDirections.contains(dirUpper)
+                } else {
+                    // Fallback: exact match if expected direction not in whitelist
+                    matches = (expectedUpper == dirUpper)
+                }
+
                 if !matches {
                     debugLog("    ⏭️  Skipping - wrong direction (expected: \(expected), got: \(dir))")
                     continue
