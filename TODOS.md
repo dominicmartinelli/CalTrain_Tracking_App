@@ -1,14 +1,14 @@
 # Caltrain Tracking App - TODO List
 
 **Generated:** November 3, 2025
-**Last Updated:** November 8, 2025
+**Last Updated:** December 13, 2025
 **Total Items:** 18
-**Completed:** 6
-**Remaining:** 12
+**Completed:** 13
+**Remaining:** 5
 
 ---
 
-## ✅ Completed (6)
+## ✅ Completed (13)
 
 ### 1. ~~Fix critical data race in CommuteHistoryStorage.recordTrip()~~ ✅
 - **Priority:** Critical
@@ -62,52 +62,56 @@
 - **Investigation Result:** No NotificationCenter.default.post() calls found in codebase. All NSError objects properly include userInfo dictionaries. Warning is from iOS internals (UIKit/SwiftUI), not app code.
 - **Conclusion:** No code changes needed - warning is system-level, not under app control.
 
----
-
-## 🔴 High Priority - Performance (1)
-
-### 4. Optimize delay prediction filtering with indexed data structure
+### 4. ~~Optimize delay prediction filtering with indexed data structure~~ ✅
 - **Priority:** High
-- **Location:** `CTTracker6App.swift:2763-2768` - `DelayPredictor.predictDelay()`
-- **Issue:** Function filters all delay records on every call. For 20,000 records in DEBUG mode, creates new array copy with every prediction.
-- **Current Code:**
-  ```swift
-  let similarRecords = records.filter {
-      $0.trainNumber == trainNumber &&
-      $0.stopCode == stopCode &&
-      $0.dayOfWeek == dayOfWeek &&
-      abs($0.hourOfDay - hourOfDay) <= 1
-  }
-  ```
-- **Recommended Fix:** Create index/dictionary structure by `(trainNumber, stopCode, dayOfWeek, hour)` or use database (Core Data, SQLite) instead of UserDefaults
-- **Impact:** Significant CPU usage when checking multiple trains on the Alerts tab
+- **Status:** COMPLETED (December 13, 2025)
+- **Note:** Delay prediction engine was removed in November 2025 (~400 lines removed). This optimization is no longer needed.
+
+### 6. ~~Improve direction matching from string prefix to exact match~~ ✅
+- **Priority:** Medium
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** `CTTracker6App.swift:4286-4309` - `SIRIService.nextDepartures()`
+- **Solution:** Replaced fragile `starts(with: "N")` with whitelist-based validation using `["N", "NORTH", "NB", "NORTHBOUND"]` arrays
+- **Files Changed:** `CTTracker6App.swift:4286-4309` - Direction matching logic
+
+### 7. ~~Add validation for iMessage recipient format~~ ✅
+- **Priority:** Medium
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** `CTTracker6App.swift:704-728, 757-778, 886-889` - SettingsScreen
+- **Solution:** Added real-time phone/email validation with regex, visual feedback (✓ green or ⚠️ orange)
+- **Files Changed:** `CTTracker6App.swift` - Added validateRecipient() function and validation UI
+
+### 10. ~~Simplify date math for tomorrow's trains using Calendar API~~ ✅
+- **Priority:** Medium
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** `CTTracker6App.swift:3669-3701, 3732-3747` - `GTFSService.getScheduledDepartures()`
+- **Solution:** Replaced manual minute arithmetic with `Calendar.date(bySettingHour:minute:second:of:)` and `timeIntervalSince()`
+- **Files Changed:** `CTTracker6App.swift` - Date calculation logic
+
+### 11. ~~Extract duplicate arrival time calculation code~~ ✅
+- **Priority:** Low (Code Quality)
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** `CTTracker6App.swift:1378-1390` - TrainsScreen and FullScheduleView
+- **Solution:** Created `calculateArrivalTimes()` helper function, eliminated 3 duplicate blocks (~60 lines)
+- **Files Changed:** `CTTracker6App.swift:104-146` - New helper function, simplified TrainsScreen and FullScheduleView
+
+### 12. ~~Replace magic numbers with named constants~~ ✅
+- **Priority:** Low (Code Quality)
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** Throughout codebase
+- **Solution:** Created `AppConfig` enum with organized configuration constants (GTFS, Network, Events, History)
+- **Files Changed:** `CTTracker6App.swift:29-55` - AppConfig enum, replaced 15+ magic numbers throughout
+
+### 14. ~~Add defensive nil checks in DepartureRow~~ ✅
+- **Priority:** Low (Code Quality)
+- **Status:** COMPLETED (December 13, 2025)
+- **Location:** `CTTracker6App.swift:1647, 1671, 1806` - DepartureRow
+- **Solution:** Added `max(0, dep.minutes)` to prevent negative display values from clock skew/data issues
+- **Files Changed:** `CTTracker6App.swift` - 3 locations with defensive checks
 
 ---
 
-## 🟡 Medium Priority - Bugs (5)
-
-### 6. Improve direction matching from string prefix to exact match
-- **Priority:** Medium
-- **Location:** `CTTracker6App.swift:4366-4372` - `SIRIService.nextDepartures()`
-- **Issue:** Direction matching uses string prefix which is fragile. If API returns "Northeast" or "Northbound Express", it would match "N"
-- **Current Code:**
-  ```swift
-  let matches = (expected.uppercased() == "N" && dir.uppercased().starts(with: "N")) ||
-               (expected.uppercased() == "S" && dir.uppercased().starts(with: "S"))
-  ```
-- **Recommended Fix:** Use exact string matching or whitelist of valid direction strings
-- **Impact:** Wrong trains could be included in results
-
-### 7. Add validation for iMessage recipient format
-- **Priority:** Medium
-- **Location:** `CTTracker6App.swift:864` - SettingsScreen
-- **Issue:** iMessage recipient field accepts any string without validating it's a valid phone number or email
-- **Current Code:**
-  ```swift
-  TextField("Phone Number", text: $iMessageRecipient)
-  ```
-- **Recommended Fix:** Add validation for phone number format (e.g., regex) or email format
-- **Impact:** Users might enter invalid recipients and messages will fail silently
+## 🟡 Medium Priority - Bugs (2)
 
 ### 8. Increase history limit from 500 to 2000+ entries
 - **Priority:** Medium
@@ -126,61 +130,6 @@
 - **Issue:** Generates ~2,376 records synchronously in detached task. While `Task.detached` prevents UI freezing, still allocates significant memory all at once
 - **Recommended Fix:** Generate in batches with small delays between batches, or use `autoreleasepool`
 - **Impact:** Memory spike during test data generation
-
-### 10. Simplify date math for tomorrow's trains using Calendar API
-- **Priority:** Medium
-- **Location:** `CTTracker6App.swift:3891-3896` - `GTFSService.getScheduledDepartures()`
-- **Issue:** Calculation for next-day trains is complex and error-prone
-- **Current Code:**
-  ```swift
-  if isNextDay {
-      minutesUntil = (24 * 60 - nowMinutes) + totalMinutes
-  } else {
-      minutesUntil = totalMinutes - nowMinutes
-  }
-  ```
-- **Recommended Fix:** Use `Calendar.date(byAdding:)` and Date comparison instead of manual minute calculations
-- **Impact:** Hard to maintain, potential for subtle bugs around midnight
-
----
-
-## 🟢 Code Quality (3)
-
-### 11. Extract duplicate arrival time calculation code
-- **Priority:** Low
-- **Location:** `CTTracker6App.swift:1450-1513` - TrainsScreen
-- **Issue:** Nearly identical code for northbound and southbound arrival calculations
-- **Recommended Fix:** Extract into single function with direction parameter
-- **Impact:** Maintenance burden, risk of inconsistency
-
-### 12. Replace magic numbers with named constants
-- **Priority:** Low
-- **Locations:** Throughout codebase
-- **Issue:** Magic numbers make code hard to maintain and understand
-- **Examples:**
-  - Line 3482: `50_000_000` (50MB max decompression)
-  - Line 3492: `100` (compression ratio limit)
-  - Line 298: `15_000_000_000` (15 second delay)
-  - Line 1810: `500` (history limit)
-- **Recommended Fix:** Extract to named constants at top of file or in configuration struct
-  ```swift
-  private enum GTFSConfig {
-      static let maxDecompressionSize = 50_000_000 // 50MB
-      static let maxCompressionRatio = 100.0
-  }
-  ```
-- **Impact:** Hard to maintain, unclear intent
-
-### 14. Add defensive nil checks in DepartureRow
-- **Priority:** Low
-- **Location:** `CTTracker6App.swift:1782` - DepartureRow
-- **Issue:** `dep.minutes` used directly without nil check (though Departure struct makes it non-optional)
-- **Current Code:**
-  ```swift
-  Text("\(dep.minutes)m")
-  ```
-- **Recommended Fix:** Defensive programming: `Text("\(dep.minutes ?? 0)m")`
-- **Impact:** Potential crash if minutes is somehow nil
 
 ---
 
@@ -255,12 +204,11 @@
 
 | Priority | Count | Items |
 |----------|-------|-------|
-| ✅ Completed | 6 | Data race, GTFS decompression, HTTPClient optimization, Arrival tolerance, Print statements, Notification investigation |
-| 🔴 High | 1 | Delay prediction optimization |
-| 🟡 Medium | 5 | Direction matching, iMessage validation, History limit, Test data, Date math |
-| 🟢 Code Quality | 3 | Duplicate code, Magic numbers, Nil checks |
+| ✅ Completed | 13 | Data race, GTFS decompression, HTTPClient, Arrival tolerance, Print statements, Notifications, Delay prediction, Direction matching, iMessage validation, Date math, Duplicate code, Magic numbers, Nil checks |
+| 🟡 Medium | 2 | History limit, Test data generation |
 | 🏗️ Architecture | 2 | File splitting, Error handling standardization |
 | 🔵 Low Priority | 1 | UIReparentingView warning |
+| **REMAINING** | **5** | **Down from 18** |
 
 ---
 
@@ -272,16 +220,16 @@
 3. ✅ Replace print() statements (Item #13)
 4. ✅ Fix notification userInfo (Item #18)
 
-### Phase 2: Performance & Bugs (4-6 hours)
-1. Optimize delay prediction filtering (Item #4)
-2. Improve direction matching (Item #6)
-3. Add iMessage validation (Item #7)
-4. Simplify date math (Item #10)
+### Phase 2: Performance & Bugs ✅ COMPLETED (December 13, 2025)
+1. ✅ Optimize delay prediction filtering (Item #4) - Already removed
+2. ✅ Improve direction matching (Item #6)
+3. ✅ Add iMessage validation (Item #7)
+4. ✅ Simplify date math (Item #10)
 
-### Phase 3: Code Quality (2-3 hours)
-1. Replace magic numbers (Item #12)
-2. Extract duplicate code (Item #11)
-3. Add defensive nil checks (Item #14)
+### Phase 3: Code Quality ✅ COMPLETED (December 13, 2025)
+1. ✅ Replace magic numbers (Item #12)
+2. ✅ Extract duplicate code (Item #11)
+3. ✅ Add defensive nil checks (Item #14)
 
 ### Phase 4: Long-term Improvements (8-12 hours)
 1. Increase history limit (Item #8)
@@ -298,8 +246,19 @@
 
 - **Critical bugs are fixed** - App is production-ready
 - **Phase 1 Quick Wins completed** (Nov 8, 2025) - Performance optimizations and code quality improvements
+- **Phase 2 Performance & Bugs completed** (Dec 13, 2025) - Direction matching, iMessage validation, date math improvements
+- **Phase 3 Code Quality completed** (Dec 13, 2025) - Magic numbers, duplicate code, defensive checks
+- **72% complete** - 13 of 18 items done (5 remaining)
 - **Simulator warnings** - Most error messages are simulator-only and safe to ignore
 - **Test on physical device** - Verify fixes work correctly on actual hardware
-- **Incremental improvements** - Tackle these items over time, prioritize based on user feedback
+- **Incremental improvements** - Tackle remaining items over time, prioritize based on user feedback
 
-**Last Updated:** November 8, 2025
+## 🎁 Bonus Improvements (December 13, 2025)
+- Fixed time calculation bug (minutes showing incorrectly with stale refDate)
+- Added arrival times to full schedule drill-down (up to 50 departures)
+- Added major Bay Area sports venues to events whitelist (49ers, Giants, Sharks, Warriors)
+- Fixed Levi's Stadium detection with flexible venue name matching
+- Replaced rate limit errors with silent automatic retry
+- Removed service alerts banner from Trains screen (cleaner UI)
+
+**Last Updated:** December 13, 2025
