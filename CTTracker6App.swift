@@ -26,6 +26,34 @@ private nonisolated func debugLog(_ message: String) {
     }
 }
 
+// MARK: - Configuration Constants
+enum AppConfig {
+    // GTFS Configuration
+    enum GTFS {
+        static let maxDecompressionSize = 50_000_000 // 50MB per file (ZIP bomb protection)
+        static let maxCompressionRatio = 100.0 // Maximum 100:1 compression ratio
+        static let tripMatchingToleranceMinutes = 2 // ±2 minutes for matching departure times to trips
+    }
+
+    // Network Configuration
+    enum Network {
+        static let rateLimitInterval: TimeInterval = 5.0 // 5 seconds between requests to same endpoint
+        static let maxCachedEndpoints = 50 // Maximum cached endpoints in HTTPClient
+        static let maxRetries = 3 // Maximum retry attempts for failed requests
+        static let nanosPerSecond: UInt64 = 1_000_000_000 // Nanoseconds in one second
+    }
+
+    // Events Configuration
+    enum Events {
+        static let largeVenueCapacityThreshold = 20_000 // Minimum capacity for "large venue" filter
+    }
+
+    // History Configuration
+    enum History {
+        static let maxHistoryEntries = 500 // Maximum commute history entries to keep
+    }
+}
+
 // MARK: - Global App State
 final class AppState: ObservableObject {
     @Published var hasKey: Bool = (Keychain.shared["api_511"]?.isEmpty == false)
@@ -62,6 +90,59 @@ func isLikelyAPIKey(_ key: String) -> Bool {
     let hasNumber = trimmed.rangeOfCharacter(from: .decimalDigits) != nil
 
     return hasLetter && hasNumber
+}
+
+// MARK: - Helper Functions
+
+/// Calculate arrival times for departures that don't have them
+/// - Parameters:
+///   - departures: Array of departures to process
+///   - fromStopCode: Origin stop code
+///   - toStopCode: Destination stop code
+///   - direction: Direction ID (0 for northbound, 1 for southbound)
+/// - Returns: Array of departures with calculated arrival times where possible
+func calculateArrivalTimes(
+    for departures: [Departure],
+    from fromStopCode: String,
+    to toStopCode: String,
+    direction: Int
+) async -> [Departure] {
+    var departuresWithArrival: [Departure] = []
+
+    for dep in departures {
+        if dep.arrivalTime == nil, let depTime = dep.depTime {
+            // Get the correct destination stop code for the direction
+            let destStopCode = CaltrainStops.getStopCodeForDirection(toStopCode, direction: direction) ?? toStopCode
+
+            if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
+                fromStop: fromStopCode,
+                toStop: destStopCode,
+                departureTime: depTime,
+                direction: direction
+            ) {
+                debugLog("  ✅ Dir \(direction): Calculated arrival at \(arrivalTime.formatted(date: .omitted, time: .shortened))")
+                // Create new departure with arrival time
+                departuresWithArrival.append(Departure(
+                    journeyRef: dep.journeyRef,
+                    minutes: dep.minutes,
+                    depTime: dep.depTime,
+                    direction: dep.direction,
+                    destination: dep.destination,
+                    trainNumber: dep.trainNumber,
+                    arrivalTime: arrivalTime,
+                    delayMinutes: dep.delayMinutes
+                ))
+            } else {
+                // If we can't calculate arrival, keep the departure without it
+                departuresWithArrival.append(dep)
+            }
+        } else {
+            // Already has arrival time or no departure time
+            departuresWithArrival.append(dep)
+        }
+    }
+
+    return departuresWithArrival
 }
 
 // MARK: - App Entry (single @main)
@@ -1294,67 +1375,19 @@ struct TrainsScreen: View {
 
             // Calculate arrival times using GTFS for departures that don't have them
             debugLog("🕐 Calculating arrival times from GTFS...")
-            var northWithArrival: [Departure] = []
-            for dep in north {
-                if dep.arrivalTime == nil, let depTime = dep.depTime {
-                    // For northbound trains, both stops need to use northbound stop codes
-                    let destStopCode = CaltrainStops.getStopCodeForDirection(southboundStopCode, direction: 0) ?? southboundStopCode
-                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
-                        fromStop: northboundStopCode,
-                        toStop: destStopCode,
-                        departureTime: depTime,
-                        direction: 0
-                    ) {
-                        debugLog("  ✅ NB: Calculated arrival at \(arrivalTime.formatted(date: .omitted, time: .shortened))")
-                        northWithArrival.append(Departure(
-                            journeyRef: dep.journeyRef,
-                            minutes: dep.minutes,
-                            depTime: dep.depTime,
-                            direction: dep.direction,
-                            destination: dep.destination,
-                            trainNumber: dep.trainNumber,
-                            arrivalTime: arrivalTime,
-                            delayMinutes: dep.delayMinutes
-                        ))
-                    } else {
-                        northWithArrival.append(dep)
-                    }
-                } else {
-                    northWithArrival.append(dep)
-                }
-            }
-            north = northWithArrival
+            north = await calculateArrivalTimes(
+                for: north,
+                from: northboundStopCode,
+                to: southboundStopCode,
+                direction: 0
+            )
 
-            var southWithArrival: [Departure] = []
-            for dep in south {
-                if dep.arrivalTime == nil, let depTime = dep.depTime {
-                    // For southbound trains, both stops need to use southbound stop codes
-                    let destStopCode = CaltrainStops.getStopCodeForDirection(northboundStopCode, direction: 1) ?? northboundStopCode
-                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
-                        fromStop: southboundStopCode,
-                        toStop: destStopCode,
-                        departureTime: depTime,
-                        direction: 1
-                    ) {
-                        debugLog("  ✅ SB: Calculated arrival at \(arrivalTime.formatted(date: .omitted, time: .shortened))")
-                        southWithArrival.append(Departure(
-                            journeyRef: dep.journeyRef,
-                            minutes: dep.minutes,
-                            depTime: dep.depTime,
-                            direction: dep.direction,
-                            destination: dep.destination,
-                            trainNumber: dep.trainNumber,
-                            arrivalTime: arrivalTime,
-                            delayMinutes: dep.delayMinutes
-                        ))
-                    } else {
-                        southWithArrival.append(dep)
-                    }
-                } else {
-                    southWithArrival.append(dep)
-                }
-            }
-            south = southWithArrival
+            south = await calculateArrivalTimes(
+                for: south,
+                from: southboundStopCode,
+                to: northboundStopCode,
+                direction: 1
+            )
 
             debugLog("📋 Merged Northbound departures:")
             for (i, dep) in north.enumerated() {
@@ -1610,7 +1643,8 @@ struct DepartureRow: View {
             }
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(dep.minutes)m").font(.title3).monospacedDigit()
+                // Defensive: Ensure minutes is non-negative (protect against clock skew/data issues)
+                Text("\(max(0, dep.minutes))m").font(.title3).monospacedDigit()
 
                 // Display delay information if available
                 if let delay = dep.delayMinutes {
@@ -1633,7 +1667,8 @@ struct DepartureRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel({
-            var label = "Departure in \(dep.minutes) minutes to \(destinationLabel)"
+            // Defensive: Ensure minutes is non-negative for accessibility
+            var label = "Departure in \(max(0, dep.minutes)) minutes to \(destinationLabel)"
             if let delay = dep.delayMinutes {
                 if delay > 0 {
                     label += ", delayed \(delay) minutes"
@@ -1767,7 +1802,8 @@ struct FullScheduleView: View {
                                     }
                                 }
                                 Spacer()
-                                Text("\(dep.minutes)m")
+                                // Defensive: Ensure minutes is non-negative
+                                Text("\(max(0, dep.minutes))m")
                                     .font(.title3)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
@@ -1817,38 +1853,12 @@ struct FullScheduleView: View {
             )
 
             // Calculate arrival times for each departure
-            var departuresWithArrival: [Departure] = []
-            for dep in departures {
-                if let depTime = dep.depTime {
-                    // Get the correct destination stop code for the direction
-                    let destStopCode = CaltrainStops.getStopCodeForDirection(destinationStopCode, direction: directionId) ?? destinationStopCode
-
-                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
-                        fromStop: stopCode,
-                        toStop: destStopCode,
-                        departureTime: depTime,
-                        direction: directionId
-                    ) {
-                        // Create new departure with arrival time
-                        departuresWithArrival.append(Departure(
-                            journeyRef: dep.journeyRef,
-                            minutes: dep.minutes,
-                            depTime: dep.depTime,
-                            direction: dep.direction,
-                            destination: dep.destination,
-                            trainNumber: dep.trainNumber,
-                            arrivalTime: arrivalTime,
-                            delayMinutes: dep.delayMinutes
-                        ))
-                    } else {
-                        // If we can't calculate arrival, keep the departure without it
-                        departuresWithArrival.append(dep)
-                    }
-                } else {
-                    // No departure time, keep as-is
-                    departuresWithArrival.append(dep)
-                }
-            }
+            let departuresWithArrival = await calculateArrivalTimes(
+                for: departures,
+                from: stopCode,
+                to: destinationStopCode,
+                direction: directionId
+            )
 
             // Filter to only show trains with positive minutes (future departures)
             allDepartures = departuresWithArrival.filter { $0.minutes > 0 }
@@ -1999,10 +2009,10 @@ struct EventsScreen: View {
                     #endif
                     return false
                 }
-                let isLarge = capacity >= 20000
+                let isLarge = capacity >= AppConfig.Events.largeVenueCapacityThreshold
                 if !isLarge {
                     #if !DEBUG
-                    debugLog("🎟️ Event '\(event.name)' filtered out: capacity \(capacity) < 20000")
+                    debugLog("🎟️ Event '\(event.name)' filtered out: capacity \(capacity) < \(AppConfig.Events.largeVenueCapacityThreshold)")
                     #endif
                 }
                 return isLarge
@@ -2800,7 +2810,7 @@ class GamificationManager {
 class CommuteHistoryStorage {
     static let shared = CommuteHistoryStorage()
     private let historyKey = "commuteHistory"
-    private let maxHistoryEntries = 500 // Keep last 500 checks
+    private let maxHistoryEntries = AppConfig.History.maxHistoryEntries
 
     // Thread-safe queue to prevent data races during concurrent writes
     private let queue = DispatchQueue(label: "com.caltrainchecker.commutehistory", attributes: .concurrent)
@@ -3286,8 +3296,7 @@ actor GTFSService {
 
     private func decompress(_ data: Data, uncompressedSize: Int) throws -> Data {
         // Security: Prevent ZIP bombs and excessive memory allocation
-        let maxUncompressedSize = 50_000_000 // 50MB per file
-        guard uncompressedSize > 0, uncompressedSize <= maxUncompressedSize else {
+        guard uncompressedSize > 0, uncompressedSize <= AppConfig.GTFS.maxDecompressionSize else {
             throw NSError(domain: "GTFS", code: 7, userInfo: [NSLocalizedDescriptionKey: "Invalid or excessive uncompressed size: \(uncompressedSize)"])
         }
 
@@ -3296,7 +3305,7 @@ actor GTFSService {
             throw NSError(domain: "GTFS", code: 8, userInfo: [NSLocalizedDescriptionKey: "Empty compressed data"])
         }
         let compressionRatio = Double(uncompressedSize) / Double(data.count)
-        guard compressionRatio <= 100 else { // Max 100:1 compression ratio
+        guard compressionRatio <= AppConfig.GTFS.maxCompressionRatio else {
             throw NSError(domain: "GTFS", code: 9, userInfo: [NSLocalizedDescriptionKey: "Suspicious compression ratio detected (possible ZIP bomb)"])
         }
 
@@ -3581,8 +3590,8 @@ actor GTFSService {
             let actualHours = hours >= 24 ? hours - 24 : hours
             let originMinutes = actualHours * 60 + minutes
 
-            // Match within 2 minutes for accurate trip matching
-            if abs(originMinutes - depMinutes) <= 2 {
+            // Match within tolerance for accurate trip matching
+            if abs(originMinutes - depMinutes) <= AppConfig.GTFS.tripMatchingToleranceMinutes {
                 debugLog("  ✅ Found matching trip! tripId=\(originST.tripId), originMinutes=\(originMinutes), diff=\(abs(originMinutes - depMinutes))")
                 // Found matching trip, now find arrival at destination
                 if let destST = stopTimes.first(where: { $0.tripId == originST.tripId && $0.stopId == toStop }) {
@@ -3848,8 +3857,8 @@ actor GTFSService {
 actor HTTPClient {
     static let shared = HTTPClient()
     private var lastRequestTime: [String: Date] = [:]
-    private let minimumInterval: TimeInterval = 5.0 // 5 seconds between requests to same endpoint
-    private let maxCachedEndpoints = 50
+    private let minimumInterval: TimeInterval = AppConfig.Network.rateLimitInterval
+    private let maxCachedEndpoints = AppConfig.Network.maxCachedEndpoints
 
     private func canMakeRequest(to url: URL) -> Bool {
         let endpoint = "\(url.host ?? "")\(url.path)"
@@ -3870,7 +3879,7 @@ actor HTTPClient {
         }
     }
 
-    func get(url: URL, headers: [String:String] = [:], maxRetries: Int = 3) async throws -> (Data, HTTPURLResponse) {
+    func get(url: URL, headers: [String:String] = [:], maxRetries: Int = AppConfig.Network.maxRetries) async throws -> (Data, HTTPURLResponse) {
         // Rate limiting: prevent excessive API calls
         guard canMakeRequest(to: url) else {
             throw NSError(domain: "HTTPClient", code: 429,
@@ -3902,7 +3911,7 @@ actor HTTPClient {
                     if attempt < maxRetries - 1 {
                         let delay = pow(2.0, Double(attempt)) // Exponential: 1s, 2s, 4s
                         debugLog("HTTP \(http.statusCode) on attempt \(attempt + 1)/\(maxRetries). Retrying in \(delay)s...")
-                        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                        try await Task.sleep(nanoseconds: UInt64(delay * Double(AppConfig.Network.nanosPerSecond)))
                         continue
                     }
                 }
@@ -3916,7 +3925,7 @@ actor HTTPClient {
                 if attempt < maxRetries - 1 {
                     let delay = pow(2.0, Double(attempt))
                     debugLog("Network error on attempt \(attempt + 1)/\(maxRetries): \(error). Retrying in \(delay)s...")
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(delay * Double(AppConfig.Network.nanosPerSecond)))
                     continue
                 }
             }
