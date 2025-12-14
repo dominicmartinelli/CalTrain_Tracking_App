@@ -1024,6 +1024,8 @@ struct TrainsScreen: View {
     @State private var fullScheduleDirection: String = "North"
     @State private var fullScheduleStopCode: String = ""
     @State private var fullScheduleStopName: String = ""
+    @State private var fullScheduleDestStopCode: String = ""
+    @State private var fullScheduleDestStopName: String = ""
     @StateObject private var weatherService = WeatherService.shared
     @StateObject private var notificationManager = SmartNotificationManager.shared
 
@@ -1098,6 +1100,8 @@ struct TrainsScreen: View {
                                 fullScheduleDirection = "North"
                                 fullScheduleStopCode = northboundStopCode
                                 fullScheduleStopName = northboundStop.name
+                                fullScheduleDestStopCode = southboundStopCode
+                                fullScheduleDestStopName = southboundStop.name
                                 showFullScheduleSheet = true
                             } label: {
                                 HStack(spacing: 4) {
@@ -1126,6 +1130,8 @@ struct TrainsScreen: View {
                                 fullScheduleDirection = "South"
                                 fullScheduleStopCode = southboundStopCode
                                 fullScheduleStopName = southboundStop.name
+                                fullScheduleDestStopCode = northboundStopCode
+                                fullScheduleDestStopName = northboundStop.name
                                 showFullScheduleSheet = true
                             } label: {
                                 HStack(spacing: 4) {
@@ -1192,7 +1198,9 @@ struct TrainsScreen: View {
                     stopCode: fullScheduleStopCode,
                     stopName: fullScheduleStopName,
                     direction: fullScheduleDirection,
-                    refDate: refDate
+                    refDate: refDate,
+                    destinationStopCode: fullScheduleDestStopCode,
+                    destinationStopName: fullScheduleDestStopName
                 )
             }
         }
@@ -1652,6 +1660,8 @@ struct FullScheduleView: View {
     let stopName: String
     let direction: String
     let refDate: Date
+    let destinationStopCode: String
+    let destinationStopName: String
 
     @State private var allDepartures: [Departure] = []
     @State private var loading = false
@@ -1692,8 +1702,19 @@ struct FullScheduleView: View {
                         ForEach(allDepartures) { dep in
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "—")
-                                        .font(.headline)
+                                    // Show departure → arrival time if arrival is available
+                                    if let depTime = dep.depTime {
+                                        if let arrivalTime = dep.arrivalTime {
+                                            Text("\(depTime.formatted(date: .omitted, time: .shortened)) → \(arrivalTime.formatted(date: .omitted, time: .shortened))")
+                                                .font(.headline)
+                                        } else {
+                                            Text(depTime.formatted(date: .omitted, time: .shortened))
+                                                .font(.headline)
+                                        }
+                                    } else {
+                                        Text("—")
+                                            .font(.headline)
+                                    }
                                     if let serviceType = dep.trainNumber, !serviceType.isEmpty {
                                         Text(serviceType)
                                             .font(.caption)
@@ -1711,7 +1732,7 @@ struct FullScheduleView: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("\(direction)bound from \(stopName)")
+            .navigationTitle("\(direction)bound from \(stopName) to \(destinationStopName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1750,8 +1771,42 @@ struct FullScheduleView: View {
                 count: 50
             )
 
+            // Calculate arrival times for each departure
+            var departuresWithArrival: [Departure] = []
+            for dep in departures {
+                if let depTime = dep.depTime {
+                    // Get the correct destination stop code for the direction
+                    let destStopCode = CaltrainStops.getStopCodeForDirection(destinationStopCode, direction: directionId) ?? destinationStopCode
+
+                    if let arrivalTime = try? await GTFSService.shared.getArrivalTime(
+                        fromStop: stopCode,
+                        toStop: destStopCode,
+                        departureTime: depTime,
+                        direction: directionId
+                    ) {
+                        // Create new departure with arrival time
+                        departuresWithArrival.append(Departure(
+                            journeyRef: dep.journeyRef,
+                            minutes: dep.minutes,
+                            depTime: dep.depTime,
+                            direction: dep.direction,
+                            destination: dep.destination,
+                            trainNumber: dep.trainNumber,
+                            arrivalTime: arrivalTime,
+                            delayMinutes: dep.delayMinutes
+                        ))
+                    } else {
+                        // If we can't calculate arrival, keep the departure without it
+                        departuresWithArrival.append(dep)
+                    }
+                } else {
+                    // No departure time, keep as-is
+                    departuresWithArrival.append(dep)
+                }
+            }
+
             // Filter to only show trains with positive minutes (future departures)
-            allDepartures = departures.filter { $0.minutes > 0 }
+            allDepartures = departuresWithArrival.filter { $0.minutes > 0 }
         } catch {
             self.error = (error as NSError).localizedDescription
             debugLog("❌ Error loading full schedule: \(error)")
@@ -4197,7 +4252,9 @@ struct SIRIService {
         let visits = try await stopMonitoring(stopCode: stop, apiKey: apiKey)
         let dfFrac = ISO8601DateFormatter(); dfFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let df = ISO8601DateFormatter()
-        let now = refDate // Use the selected time from the picker
+        // ALWAYS use current time for minutes calculation (real-time data is always "now")
+        // The refDate parameter is only used by GTFS for scheduled lookups
+        let now = Date()
 
         var out: [Departure] = []
         debugLog("📍 Stop: \(stop), Destination: \(destinationStop ?? "any"), Expected Dir: \(expectedDirection ?? "any"), RefDate: \(now), Visits: \(visits.count)")
