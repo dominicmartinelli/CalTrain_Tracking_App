@@ -3868,6 +3868,16 @@ actor HTTPClient {
         return true
     }
 
+    private func timeUntilCanRequest(to url: URL) -> TimeInterval {
+        let endpoint = "\(url.host ?? "")\(url.path)"
+        if let lastTime = lastRequestTime[endpoint] {
+            let elapsed = Date().timeIntervalSince(lastTime)
+            let remaining = minimumInterval - elapsed
+            return max(0, remaining)
+        }
+        return 0
+    }
+
     private func recordRequest(to url: URL) {
         let endpoint = "\(url.host ?? "")\(url.path)"
         lastRequestTime[endpoint] = Date()
@@ -3880,10 +3890,11 @@ actor HTTPClient {
     }
 
     func get(url: URL, headers: [String:String] = [:], maxRetries: Int = AppConfig.Network.maxRetries) async throws -> (Data, HTTPURLResponse) {
-        // Rate limiting: prevent excessive API calls
-        guard canMakeRequest(to: url) else {
-            throw NSError(domain: "HTTPClient", code: 429,
-                         userInfo: [NSLocalizedDescriptionKey: "Too many requests. Please wait a moment."])
+        // Rate limiting: silently wait if needed instead of showing error
+        let waitTime = timeUntilCanRequest(to: url)
+        if waitTime > 0 {
+            debugLog("⏱️ Rate limit: waiting \(String(format: "%.1f", waitTime))s before request to \(url.host ?? "unknown")")
+            try await Task.sleep(nanoseconds: UInt64(waitTime * Double(AppConfig.Network.nanosPerSecond)))
         }
 
         var req = URLRequest(url: url)
