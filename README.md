@@ -29,6 +29,24 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
   - Shows alert count and navigates to Alerts tab for full details
 - Automatic GTFS feed updates (24-hour cache)
 
+### 📅 Calendar Commute Planning (NEW!)
+- **Automatic train recommendations** for tomorrow's first meeting
+- **iOS Calendar integration** - reads events from your iPhone Calendar app (including Google Calendar if synced)
+- **Smart meeting detection**:
+  - Finds first non-all-day meeting tomorrow
+  - Skips calendar holds, OOO events, and all-day items
+  - Works with any calendar synced to iPhone (Google, Outlook, iCloud, etc.)
+- **Configurable settings** (in Settings → Calendar Commute Settings):
+  - **Home Station**: Where you depart from (e.g., Mountain View)
+  - **Office Station**: Where your office is located (e.g., San Francisco)
+  - **Commute Buffer**: Adjustable 5-60 minutes before meeting (default 15 min)
+- **Optimal train selection** - recommends the **latest** train that still gets you there on time (maximizes sleep time!)
+- **Clear route display** - shows "Home → Office" route and buffer time
+- **Arrival time calculation** - displays departure time, arrival time, and train number
+- **Privacy-first** - calendar access only used locally, never uploaded
+- **Permission-based** - requires one-time calendar access permission
+- Perfect for: Daily commuters who want to sleep in as late as possible while still making their meetings on time!
+
 ### 🎟️ Bay Area Events
 - **Date picker** - browse events for today or any future date
 - **Smart filtering** - show all venues or only large venues (20,000+ capacity)
@@ -90,6 +108,12 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
 - Configure in Settings tab
 
 ### ⚙️ Settings
+- **Smart Notifications** - Opt-in alerts for your usual trains and delays
+- **iMessage Sharing** - Configure recipient for quick train time sharing
+- **Calendar Commute Settings** (NEW!):
+  - **Home Station**: Where you depart from each morning
+  - **Office Station**: Where your office is located
+  - **Commute Buffer**: How many minutes early to arrive (5-60 min, default 15)
 - **Custom themes** - Choose from 5 beautiful color schemes:
   - 🎨 Vintage (default) - Muted red-brown with cream accents
   - ✨ Modern - Bright blue with green accents
@@ -98,7 +122,6 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
   - 🌅 Sunset - Coral orange with golden yellow accents
   - Theme persists across app launches
   - Live preview with color circles in theme selector
-- Smart notification toggle (appears first for easy access)
 - Secure API key management for 511.org and Ticketmaster
 - All credentials stored in iOS Keychain
 - About page with data attribution and compliance info
@@ -123,13 +146,15 @@ A SwiftUI iOS app for tracking Caltrain departures, service alerts, and Bay Area
    - **Southern Station**: Your station closer to San Jose (e.g., Mountain View)
    - **Northern Station**: Your station closer to SF (e.g., 22nd Street)
 4. (Optional) Go to **Settings** tab to add Ticketmaster API key for events
-5. The app has 6 tabs:
+5. (Optional) Configure **Calendar Commute** in Settings → Calendar Commute Settings
+6. The app has 7 tabs:
    - **Trains**: Northbound and Southbound departures with weather
+   - **Commute**: Calendar-based train recommendations for tomorrow's meetings (NEW!)
    - **Events**: Browse Bay Area events by date near Caltrain stations
    - **Alerts**: Service disruptions with visual status
    - **Insights**: Streak tracking, achievements, CO₂ savings, and patterns
    - **Stations**: Configure and save multiple commute routes
-   - **Settings**: Smart notifications toggle and API key management
+   - **Settings**: Smart notifications, calendar settings, themes, and API key management
 
 ## Requirements
 
@@ -219,6 +244,16 @@ All Caltrain stations are supported:
   - Optimized arrival time matching with ±2 minute tolerance for accuracy
   - Debug-only logging with debugLog() to eliminate production console overhead
   - Removed delay prediction engine for simplified codebase (~400 lines removed)
+- **EventKit Calendar Integration** (December 2025)
+  - Reads iOS Calendar events (supports Google Calendar, Outlook, iCloud, etc.)
+  - Permission-based access with @Published state updates
+  - Filters non-all-day meetings for commute planning
+  - Pacific Time timezone handling for accurate meeting times
+  - Fetches full day's schedule starting from midnight (not meeting time)
+  - Direction detection based on station positions in GTFS data
+  - Calculates latest departure that arrives on time (maximizes sleep!)
+  - Validates home ≠ office station configuration
+  - Adjustable commute buffer (5-60 minutes) via Settings
 - Robust SIRI XML/JSON response parsing
 - Haversine formula for calculating distances between venues and stations
 - Custom splash screen with fade-out animation

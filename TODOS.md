@@ -1,7 +1,7 @@
 # Caltrain Tracking App - TODO List
 
 **Generated:** November 3, 2025
-**Last Updated:** December 13, 2025
+**Last Updated:** December 15, 2025
 **Total Items:** 18
 **Completed:** 13
 **Remaining:** 5
@@ -261,4 +261,16 @@
 - Replaced rate limit errors with silent automatic retry
 - Removed service alerts banner from Trains screen (cleaner UI)
 
-**Last Updated:** December 13, 2025
+## 🎁 New Features (December 15, 2025)
+- **Calendar Commute Planning** - Automatic train recommendations for tomorrow's first meeting
+  - iOS Calendar integration using EventKit (supports Google Calendar, Outlook, iCloud)
+  - Configurable home station, office station, and commute buffer (5-60 min)
+  - Smart meeting detection: skips all-day events, finds first timed meeting
+  - Optimal train selection: recommends latest train that arrives on time
+  - Pacific Time timezone handling for accurate meeting times
+  - Validates home ≠ office station configuration
+  - New "Commute" tab with calendar permission UI
+  - Shows departure time, arrival time, route, and buffer info
+  - Privacy-first: all calendar data processed locally
+
+**Last Updated:** December 15, 2025
