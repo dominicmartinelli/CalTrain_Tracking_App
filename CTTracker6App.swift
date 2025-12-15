@@ -335,7 +335,7 @@ struct RootView: View {
             Task { await loadAlerts() }
         }
         .onChange(of: tab, initial: false) { _, newTab in
-            if newTab == 2 { // Alerts tab
+            if newTab == 3 { // Alerts tab (tag 3, not 2)
                 Task { await loadAlerts() }
             }
         }
@@ -561,6 +561,8 @@ struct InsightsView: View {
     @State private var co2Savings: (trips: Int, co2SavedLbs: Double) = (0, 0.0)
     @State private var patterns: [CommutePattern] = []
     @State private var gameStats: GameStats = GameStats()
+    @State private var showSecretStats = false
+    @State private var shakeDetector = ShakeDetector()
 
     var body: some View {
         List {
@@ -759,6 +761,16 @@ struct InsightsView: View {
         .navigationBarTitleDisplayMode(.large)
         .onAppear {
             loadStats()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DeviceShaken"))) { _ in
+            showSecretStats = true
+        }
+        .sheet(isPresented: $showSecretStats) {
+            let history = CommuteHistoryStorage.shared.loadHistory()
+            SecretStatsView(
+                totalTrips: history.count,
+                totalChecks: stats.checksThisWeek // This is a proxy, could track better
+            )
         }
     }
 
@@ -1187,6 +1199,8 @@ struct TrainsScreen: View {
     @State private var fullScheduleDestStopName: String = ""
     @StateObject private var weatherService = WeatherService.shared
     @StateObject private var notificationManager = SmartNotificationManager.shared
+    @State private var logoTapCount = 0
+    @State private var showEasterEgg = false
 
     private var northboundStop: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -1251,8 +1265,13 @@ struct TrainsScreen: View {
                             if let weather = weatherService.currentWeather[southboundStopCode] {
                                 HStack(spacing: 4) {
                                     Text(weather.symbol)
-                                    Text("\(Int(weather.temp))°F at \(southboundStop.name)")
-                                        .font(.caption)
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("\(Int(weather.temp))°F at \(southboundStop.name)")
+                                            .font(.caption)
+                                        Text(FunnyMessages.weatherPersonality(condition: weather.condition))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
@@ -1281,8 +1300,13 @@ struct TrainsScreen: View {
                             if let weather = weatherService.currentWeather[northboundStopCode] {
                                 HStack(spacing: 4) {
                                     Text(weather.symbol)
-                                    Text("\(Int(weather.temp))°F at \(northboundStop.name)")
-                                        .font(.caption)
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("\(Int(weather.temp))°F at \(northboundStop.name)")
+                                            .font(.caption)
+                                        Text(FunnyMessages.weatherPersonality(condition: weather.condition))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
@@ -1294,11 +1318,30 @@ struct TrainsScreen: View {
             .navigationTitle("Caltrain")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Image("LogoIcon")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
+                    Button(action: {
+                        logoTapCount += 1
+                        if logoTapCount >= 10 {
+                            showEasterEgg = true
+                            logoTapCount = 0
+                            let generator = UINotificationFeedbackGenerator()
+                            generator.notificationOccurred(.success)
+                        } else if logoTapCount >= 7 {
+                            // Extra haptic at 7 taps (hint you're close!)
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                        }
+                    }) {
+                        Image("LogoIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
+                    }
                 }
+            }
+            .alert("🎉 Easter Egg Found!", isPresented: $showEasterEgg) {
+                Button("Amazing!") { }
+            } message: {
+                Text("You discovered the secret! 🕵️\n\nYou're officially a CalTrain Tracker power user. Keep exploring for more surprises!\n\n💡 Try shaking your phone in the Insights tab...")
             }
             .task {
                 await load()
@@ -1659,10 +1702,14 @@ struct DepartureRow: View {
                 // Display delay information if available
                 if let delay = dep.delayMinutes {
                     if delay > 0 {
-                        Text("+\(delay) min")
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                            .bold()
+                        HStack(spacing: 2) {
+                            Text("+\(delay) min")
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .bold()
+                            Text(FunnyMessages.randomDelayEmoji())
+                                .font(.caption2)
+                        }
                     } else if delay < 0 {
                         Text("\(delay) min")
                             .font(.caption2)
@@ -1708,7 +1755,7 @@ struct DepartureRow: View {
 
     func recordTrip() {
         // Record for gamification first (thread-safe)
-        let (_, newAchievements) = GamificationManager.shared.recordTrip()
+        let (stats, newAchievements) = GamificationManager.shared.recordTrip()
 
         // Record trip in thread-safe storage
         CommuteHistoryStorage.shared.recordTrip(
@@ -1725,9 +1772,16 @@ struct DepartureRow: View {
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
 
+        // Check for milestone message
+        if let milestoneMsg = FunnyMessages.milestoneMessage(tripCount: stats.totalTrips) {
+            // Show milestone celebration with extra haptic
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            debugLog("🎉 MILESTONE: \(milestoneMsg)")
+        }
+
         // Show achievement notification if any unlocked
         if !newAchievements.isEmpty {
-            // You could show an alert or toast here
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
         }
@@ -1783,8 +1837,10 @@ struct FullScheduleView: View {
                         Image(systemName: "calendar.badge.exclamationmark")
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
-                        Text("No departures found")
+                        Text(FunnyMessages.randomNoTrainMessage())
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
                     }
                     .padding()
                 } else {
@@ -2148,21 +2204,9 @@ struct EventsScreen: View {
                             .padding()
                             .textSelection(.enabled)
                     }
-                } else if events.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "calendar.badge.exclamationmark")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.secondary)
-                        Text("No upcoming events found")
-                            .foregroundStyle(.secondary)
-                        Text("Add your Ticketmaster API key in Settings")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding()
                 } else {
                     VStack(spacing: 0) {
-                        // Filter controls - always visible
+                        // Filter controls - always visible when not loading/error
                         VStack(spacing: 12) {
                             // Date picker
                             DatePicker("Date:", selection: $selectedDate, displayedComponents: .date)
@@ -2224,8 +2268,22 @@ struct EventsScreen: View {
                         .padding()
                         .background(Color(.systemGroupedBackground))
 
-                        // Events list or empty state
-                        if filteredEvents.isEmpty {
+                        // Events list or empty state below controls
+                        if events.isEmpty {
+                            VStack(spacing: 16) {
+                                Image(systemName: "calendar.badge.exclamationmark")
+                                    .font(.system(size: 60))
+                                    .foregroundStyle(.secondary)
+                                Text("No upcoming events found")
+                                    .foregroundStyle(.secondary)
+                                Text("Adjust filters above or check Settings for API key")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding()
+                            .frame(maxHeight: .infinity)
+                        } else if filteredEvents.isEmpty {
                             VStack(spacing: 16) {
                                 Image(systemName: "mappin.slash")
                                     .font(.system(size: 60))
@@ -2566,6 +2624,207 @@ struct CalendarScreen: View {
         }
 
         return 0  // default northbound
+    }
+}
+
+// MARK: - Easter Eggs & Fun
+
+// Shake detector for secret stats
+@Observable
+class ShakeDetector {
+    var didShake: Bool = false
+
+    func reset() {
+        didShake = false
+    }
+}
+
+// Extension to detect shake on any view
+extension UIWindow {
+    open override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake {
+            NotificationCenter.default.post(name: NSNotification.Name("DeviceShaken"), object: nil)
+        }
+    }
+}
+
+// Funny messages throughout the app
+struct FunnyMessages {
+    // No trains messages
+    static let noTrains = [
+        "All the trains are on vacation 🏖️",
+        "The trains are playing hide and seek 🙈",
+        "Trains? Where we're going, we don't need trains... oh wait 🤔",
+        "The trains left without us 😢",
+        "Plot twist: There are no trains",
+        "404: Trains not found",
+        "The trains are stuck in traffic (ironic, isn't it?)",
+        "Trains are on a coffee break ☕",
+        "Maybe try teleportation? 🔮",
+        "No trains, but the birds are flying north! 🕊️"
+    ]
+
+    // Delay messages (full text for accessibility)
+    static let delayMessages = [
+        "Train's fashionably late ⌚",
+        "Train stopped for coffee ☕",
+        "Train taking the scenic route 🌄",
+        "Train's running on Island Time 🏝️",
+        "Train got distracted by the view 👀",
+        "Train's making friends along the way 👋",
+        "Train practicing its grand entrance 🎭",
+        "Train decided to stop and smell the roses 🌹"
+    ]
+
+    // Delay emojis (compact display for UI)
+    static let delayEmojis = [
+        "⌚", "☕", "🌄", "🏝️", "👀", "👋", "🎭", "🌹"
+    ]
+
+    // Weather jokes
+    static func weatherPersonality(condition: String) -> String {
+        switch condition.lowercased() {
+        case let c where c.contains("fog"):
+            return "Perfect mystery novel weather 📚"
+        case let c where c.contains("rain"):
+            return "Don't forget your umbrella! ☔"
+        case let c where c.contains("sun"):
+            return "Sunglasses weather! 😎"
+        case let c where c.contains("cloud"):
+            return "The sky is doing its best impression of cotton candy 🍥"
+        case let c where c.contains("clear"):
+            return "Clear skies ahead! ✈️"
+        default:
+            return "Weather is weather-ing ⛅"
+        }
+    }
+
+    // Milestone messages
+    static func milestoneMessage(tripCount: Int) -> String? {
+        switch tripCount {
+        case 1:
+            return "🎉 First trip! Welcome aboard the fun train!"
+        case 10:
+            return "🎊 10 trips! You're getting the hang of this!"
+        case 25:
+            return "🌟 25 trips! You're officially a regular!"
+        case 50:
+            return "🎯 50 trips! Halfway to legendary status!"
+        case 69:
+            return "😎 Nice."
+        case 100:
+            return "💯 CENTURY CLUB! You're a Caltrain master!"
+        case 200:
+            return "🚀 200 trips! Are you living on the train now?"
+        case 365:
+            return "📅 A trip for every day of the year! Legend!"
+        case 500:
+            return "👑 500 trips! You basically own Caltrain now"
+        case 1000:
+            return "🏆 1,000 TRIPS! This is your life now. And we love it."
+        default:
+            return nil
+        }
+    }
+
+    static func randomNoTrainMessage() -> String {
+        noTrains.randomElement() ?? "No trains available"
+    }
+
+    static func randomDelayMessage() -> String {
+        delayMessages.randomElement() ?? "Train is delayed"
+    }
+
+    static func randomDelayEmoji() -> String {
+        delayEmojis.randomElement() ?? "⏰"
+    }
+}
+
+// Secret stats view
+struct SecretStatsView: View {
+    let totalTrips: Int
+    let totalChecks: Int
+    let appVersion = "6.0"
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(spacing: 20) {
+                        Text("🕵️")
+                            .font(.system(size: 80))
+                        Text("Secret Stats")
+                            .font(.title)
+                            .fontWeight(.bold)
+                        Text("You found the Easter egg!")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                }
+
+                Section("Nerdy Stats") {
+                    HStack {
+                        Text("Total Schedule Checks")
+                        Spacer()
+                        Text("\(totalChecks)")
+                            .fontWeight(.bold)
+                    }
+
+                    HStack {
+                        Text("Trips Logged")
+                        Spacer()
+                        Text("\(totalTrips)")
+                            .fontWeight(.bold)
+                    }
+
+                    if totalChecks > 0 {
+                        HStack {
+                            Text("Check-to-Trip Ratio")
+                            Spacer()
+                            Text(String(format: "%.1f:1", Double(totalChecks) / max(1.0, Double(totalTrips))))
+                                .fontWeight(.bold)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section("About") {
+                    HStack {
+                        Text("App Version")
+                        Spacer()
+                        Text("CalTrain Tracker \(appVersion)")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Text("Created with")
+                        Spacer()
+                        Text("🤖 Claude Code")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    Text("💡 Pro tip: Shake your phone in the Insights tab anytime to see these stats!")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .navigationTitle("🔍 Secret Stats")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
