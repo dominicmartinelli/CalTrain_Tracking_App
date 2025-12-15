@@ -12,6 +12,7 @@ import Security
 import Compression
 import UserNotifications
 import MessageUI
+import EventKit
 
 // MARK: - Debug Configuration
 #if DEBUG
@@ -303,24 +304,27 @@ struct RootView: View {
             TrainsScreen()
                 .tabItem { Label("Trains", systemImage: "train.side.front.car") }
                 .tag(0)
+            CalendarScreen()
+                .tabItem { Label("Commute", systemImage: "calendar.badge.clock") }
+                .tag(1)
             EventsScreen()
                 .tabItem { Label("Events", systemImage: "calendar") }
-                .tag(1)
+                .tag(2)
             AlertsScreen(alerts: $alerts, isLoading: $alertsLoading, error: $alertsError, onRetry: { Task { await loadAlerts() } })
                 .tabItem {
                     Label("Alerts", systemImage: totalAlertCount == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
                 .badge(totalAlertCount == 0 ? 0 : totalAlertCount)
-                .tag(2)
+                .tag(3)
             InsightsView()
                 .tabItem { Label("Insights", systemImage: "chart.bar.fill") }
-                .tag(3)
+                .tag(4)
             StationsScreen()
                 .tabItem { Label("Stations", systemImage: "mappin.and.ellipse") }
-                .tag(4)
+                .tag(5)
             SettingsScreen()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(5)
+                .tag(6)
         }
         .accentColor(themeManager.currentTheme.primaryColor)
         .fullScreenCover(isPresented: needsKeyBinding) {
@@ -778,6 +782,9 @@ struct SettingsScreen: View {
     @StateObject private var notificationManager = SmartNotificationManager.shared
     @AppStorage("northboundStopCode") private var northboundStopCode = CaltrainStops.defaultNorthbound.stopCode
     @AppStorage("southboundStopCode") private var southboundStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @AppStorage("homeStopCode") private var homeStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @AppStorage("officeStopCode") private var officeStopCode = CaltrainStops.defaultNorthbound.stopCode
+    @AppStorage("commuteBufferMinutes") private var commuteBufferMinutes = 15
     @AppStorage("iMessageRecipient") private var iMessageRecipient = ""
     @State private var iMessageValidationMessage: String = ""
     @State private var iMessageValidationColor: Color = .secondary
@@ -855,6 +862,34 @@ struct SettingsScreen: View {
                     Text("iMessage Sharing")
                 } footer: {
                     Text("Enter a phone number or email to quickly share train arrival times via iMessage from the Trains tab")
+                        .font(.caption2)
+                }
+
+                Section {
+                    Picker("Home Station", selection: $homeStopCode) {
+                        ForEach(CaltrainStops.northbound) { stop in
+                            Text(stop.name).tag(stop.stopCode)
+                        }
+                    }
+
+                    Picker("Office Station", selection: $officeStopCode) {
+                        ForEach(CaltrainStops.northbound) { stop in
+                            Text(stop.name).tag(stop.stopCode)
+                        }
+                    }
+
+                    Stepper(value: $commuteBufferMinutes, in: 5...60, step: 5) {
+                        HStack {
+                            Text("Commute Buffer")
+                            Spacer()
+                            Text("\(commuteBufferMinutes) min")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Calendar Commute Settings")
+                } footer: {
+                    Text("The Commute tab will recommend trains from your home to office, arriving \(commuteBufferMinutes) minutes before your first meeting.")
                         .font(.caption2)
                 }
 
@@ -2296,6 +2331,241 @@ struct EventRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Calendar/Commute UI
+struct CalendarScreen: View {
+    @StateObject private var calendarService = CalendarService.shared
+    @AppStorage("homeStopCode") private var homeStopCode = CaltrainStops.defaultSouthbound.stopCode
+    @AppStorage("officeStopCode") private var officeStopCode = CaltrainStops.defaultNorthbound.stopCode
+    @AppStorage("commuteBufferMinutes") private var commuteBufferMinutes = 15
+    @State private var loading = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    if !calendarService.hasPermission {
+                        // Permission request
+                        VStack(spacing: 16) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.system(size: 60))
+                                .foregroundStyle(.blue)
+
+                            Text("Calendar Access Needed")
+                                .font(.title2)
+                                .fontWeight(.bold)
+
+                            Text("Allow access to your calendar to see which train you need for tomorrow's first meeting.")
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal)
+
+                            Button {
+                                Task {
+                                    await calendarService.requestPermission()
+                                    if calendarService.hasPermission {
+                                        await loadMeeting()
+                                    }
+                                }
+                            } label: {
+                                Label("Grant Calendar Access", systemImage: "calendar")
+                                    .padding()
+                                    .background(Color.blue)
+                                    .foregroundStyle(.white)
+                                    .cornerRadius(10)
+                            }
+                        }
+                        .padding()
+                    } else if loading {
+                        ProgressView("Loading tomorrow's meetings...")
+                            .padding()
+                    } else if let error = calendarService.error {
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 50))
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Try Again") {
+                                Task { await loadMeeting() }
+                            }
+                        }
+                        .padding()
+                    } else if let meeting = calendarService.firstMeeting {
+                        // Show meeting and recommended train
+                        VStack(alignment: .leading, spacing: 20) {
+                            // Meeting card
+                            VStack(alignment: .leading, spacing: 12) {
+                                Label("Tomorrow's First Meeting", systemImage: "calendar")
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(meeting.title ?? "Untitled Meeting")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+
+                                    if let location = meeting.location {
+                                        Label(location, systemImage: "mappin.circle.fill")
+                                            .foregroundStyle(.blue)
+                                    }
+
+                                    Label(meeting.startDate.formatted(date: .omitted, time: .shortened), systemImage: "clock")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding()
+                            .background(Color(.systemGray6))
+                            .cornerRadius(12)
+
+                            // Recommended train
+                            if let train = calendarService.recommendedTrain {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Label("Recommended Train", systemImage: "train.side.front.car")
+                                        .font(.headline)
+                                        .foregroundStyle(.secondary)
+
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("Depart")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(train.depTime?.formatted(date: .omitted, time: .shortened) ?? "—")
+                                                .font(.title)
+                                                .fontWeight(.bold)
+                                        }
+
+                                        Spacer()
+
+                                        Image(systemName: "arrow.right")
+                                            .foregroundStyle(.secondary)
+
+                                        Spacer()
+
+                                        if let arrivalTime = train.arrivalTime {
+                                            VStack(alignment: .trailing, spacing: 4) {
+                                                Text("Arrive")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Text(arrivalTime.formatted(date: .omitted, time: .shortened))
+                                                    .font(.title)
+                                                    .fontWeight(.bold)
+                                            }
+                                        }
+                                    }
+
+                                    // Show home → office route and buffer time
+                                    let homeName = CaltrainStops.northbound.first(where: { $0.stopCode == homeStopCode })?.name
+                                        ?? CaltrainStops.southbound.first(where: { $0.stopCode == homeStopCode })?.name
+                                        ?? "Home"
+                                    let officeName = CaltrainStops.northbound.first(where: { $0.stopCode == officeStopCode })?.name
+                                        ?? CaltrainStops.southbound.first(where: { $0.stopCode == officeStopCode })?.name
+                                        ?? "Office"
+                                    Text("\(homeName) → \(officeName)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("Arrive \(commuteBufferMinutes) min before meeting")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+
+                                    if let serviceType = train.trainNumber {
+                                        Text(serviceType)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .padding()
+                                .background(Color(.systemGreen).opacity(0.1))
+                                .cornerRadius(12)
+                            } else {
+                                Text("Calculating best train...")
+                                    .foregroundStyle(.secondary)
+                                    .padding()
+                            }
+                        }
+                        .padding()
+                    } else {
+                        // No meetings
+                        VStack(spacing: 12) {
+                            Image(systemName: "calendar.badge.checkmark")
+                                .font(.system(size: 50))
+                                .foregroundStyle(.green)
+                            Text("No meetings tomorrow")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Text("All-day events are excluded")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Refresh") {
+                                Task { await loadMeeting() }
+                            }
+                        }
+                        .padding()
+                    }
+                }
+            }
+            .navigationTitle("Tomorrow's Commute")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("LogoIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                }
+            }
+            .task {
+                if calendarService.hasPermission {
+                    await loadMeeting()
+                }
+            }
+        }
+    }
+
+    private func loadMeeting() async {
+        loading = true
+        defer { loading = false }
+
+        await calendarService.fetchTomorrowsFirstMeeting()
+
+        if let meeting = calendarService.firstMeeting {
+            // Get station names to check if they're the same
+            let homeStationName = CaltrainStops.northbound.first(where: { $0.stopCode == homeStopCode })?.name
+                ?? CaltrainStops.southbound.first(where: { $0.stopCode == homeStopCode })?.name
+            let officeStationName = CaltrainStops.northbound.first(where: { $0.stopCode == officeStopCode })?.name
+                ?? CaltrainStops.southbound.first(where: { $0.stopCode == officeStopCode })?.name
+
+            // Check if office is same as home - can't calculate route
+            if homeStationName == officeStationName {
+                await MainActor.run {
+                    calendarService.error = "Home and Office stations must be different. Configure in Settings → Calendar Commute Settings."
+                    calendarService.recommendedTrain = nil
+                }
+                return
+            }
+
+            await calendarService.calculateRecommendedTrain(
+                from: homeStopCode,
+                to: officeStopCode,
+                meeting: meeting,
+                bufferMinutes: commuteBufferMinutes
+            )
+        }
+    }
+
+    private func getDirection(from: String, to: String) -> Int {
+        // Find stations in either direction list
+        let fromIndexNB = CaltrainStops.northbound.firstIndex { $0.stopCode == from }
+        let toIndexNB = CaltrainStops.northbound.firstIndex { $0.stopCode == to }
+
+        if let fromIdx = fromIndexNB, let toIdx = toIndexNB {
+            return toIdx > fromIdx ? 0 : 1  // 0 = northbound (toward SF), 1 = southbound
+        }
+
+        return 0  // default northbound
     }
 }
 
@@ -4418,6 +4688,196 @@ struct SIRIService {
         let result = Array(out.sorted { ($0.depTime ?? .distantFuture) < ($1.depTime ?? .distantFuture) }.prefix(3))
         debugLog("  ✅ Returning \(result.count) departures")
         return result
+    }
+}
+
+// MARK: - Calendar Service (EventKit)
+class CalendarService: ObservableObject {
+    static let shared = CalendarService()
+    private let eventStore = EKEventStore()
+
+    @Published var hasPermission = false
+    @Published var firstMeeting: EKEvent?
+    @Published var recommendedTrain: Departure?
+    @Published var error: String?
+
+    init() {
+        // Check current permission status on initialization
+        Task {
+            await checkPermissionStatus()
+        }
+    }
+
+    private func checkPermissionStatus() async {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        await MainActor.run {
+            hasPermission = (status == .fullAccess || status == .authorized)
+        }
+        debugLog("📅 Initial calendar permission status: \(status.rawValue) -> \(hasPermission)")
+    }
+
+    func requestPermission() async {
+        debugLog("📅 Requesting calendar permission...")
+        do {
+            let granted = try await eventStore.requestFullAccessToEvents()
+            await MainActor.run {
+                hasPermission = granted
+            }
+            debugLog("📅 Calendar permission granted: \(granted)")
+        } catch {
+            debugLog("❌ Calendar permission error: \(error)")
+            await MainActor.run {
+                hasPermission = false
+                self.error = "Calendar access denied: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func fetchTomorrowsFirstMeeting() async {
+        guard hasPermission else {
+            await MainActor.run {
+                error = "Calendar permission not granted"
+            }
+            return
+        }
+
+        // Get tomorrow's date range (Pacific Time)
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()),
+              let startOfDay = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: tomorrow),
+              let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: tomorrow) else {
+            await MainActor.run {
+                error = "Error calculating tomorrow's date"
+            }
+            return
+        }
+
+        debugLog("📅 Fetching calendar events for tomorrow: \(startOfDay) to \(endOfDay)")
+
+        // Fetch events
+        let predicate = eventStore.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: nil)
+        let events = eventStore.events(matching: predicate)
+
+        debugLog("📅 Found \(events.count) events tomorrow")
+
+        // Filter for non-all-day meetings, sort by start time
+        // Assumes all timed meetings require commute to office
+        let timedMeetings = events
+            .filter { event in
+                // Skip all-day events (these are usually calendar holds, not meetings)
+                if event.isAllDay {
+                    debugLog("📅 Skipping all-day event: \(event.title ?? "Untitled")")
+                    return false
+                }
+                // Skip declined events
+                if event.status == .canceled {
+                    debugLog("📅 Skipping canceled event: \(event.title ?? "Untitled")")
+                    return false
+                }
+                return true
+            }
+            .sorted { $0.startDate < $1.startDate }
+
+        debugLog("📅 \(timedMeetings.count) timed meetings tomorrow")
+
+        await MainActor.run {
+            firstMeeting = timedMeetings.first
+            if let meeting = firstMeeting {
+                debugLog("📅 First meeting: \(meeting.title ?? "Untitled") at \(meeting.startDate)")
+            } else {
+                debugLog("📅 No timed meetings found tomorrow")
+            }
+        }
+    }
+
+    func calculateRecommendedTrain(from fromStopCode: String, to officeStopCode: String, meeting: EKEvent, bufferMinutes: Int) async {
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles")
+        formatter.dateFormat = "h:mm a 'PT'"
+
+        debugLog("🚂 Calculating train from \(fromStopCode) to \(officeStopCode)")
+        debugLog("🚂 Meeting time: \(formatter.string(from: meeting.startDate))")
+        debugLog("🚂 Buffer time: \(bufferMinutes) minutes")
+
+        // Calculate arrival time needed (meeting time - buffer)
+        let arrivalTimeNeeded = meeting.startDate.addingTimeInterval(-Double(bufferMinutes) * 60)
+        debugLog("🚂 Need to arrive at office station by: \(formatter.string(from: arrivalTimeNeeded))")
+
+        // Get scheduled trains for tomorrow
+        do {
+            let direction = getDirection(from: fromStopCode, to: officeStopCode)
+            debugLog("🚂 Direction: \(direction == 0 ? "Northbound" : "Southbound")")
+
+            // Get trains starting from beginning of day, not meeting time
+            var calendar = Calendar.current
+            calendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+            guard let startOfDay = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: meeting.startDate) else {
+                throw NSError(domain: "CalendarService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not calculate start of day"])
+            }
+
+            let departures = try await GTFSService.shared.getScheduledDepartures(
+                stopCode: fromStopCode,
+                direction: direction,
+                refDate: startOfDay,
+                count: 100
+            )
+
+            debugLog("🚂 Found \(departures.count) departures")
+
+            // Calculate arrival times for each departure
+            let departuresWithArrival = await calculateArrivalTimes(
+                for: departures,
+                from: fromStopCode,
+                to: officeStopCode,
+                direction: direction
+            )
+
+            // Find trains that arrive before the needed time
+            let suitable = departuresWithArrival.filter { dep in
+                guard let arrivalTime = dep.arrivalTime else { return false }
+                // Must arrive before needed time
+                return arrivalTime <= arrivalTimeNeeded
+            }.sorted { dep1, dep2 in
+                // Sort by departure time
+                guard let d1 = dep1.depTime, let d2 = dep2.depTime else { return false }
+                return d1 < d2
+            }
+
+            debugLog("🚂 Found \(suitable.count) suitable trains")
+
+            await MainActor.run {
+                // Recommend the last train that still arrives on time
+                // (gives user maximum sleep time)
+                recommendedTrain = suitable.last
+                if let train = recommendedTrain {
+                    debugLog("🚂 Recommended train: Depart \(train.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrive \(train.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "?")")
+                } else {
+                    debugLog("🚂 No suitable trains found")
+                    error = "No trains arrive early enough for this meeting"
+                }
+            }
+        } catch {
+            debugLog("❌ Error fetching trains: \(error)")
+            await MainActor.run {
+                self.error = "Error finding trains: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func getDirection(from: String, to: String) -> Int {
+        // Find stations in northbound list and compare positions
+        let fromIndexNB = CaltrainStops.northbound.firstIndex { $0.stopCode == from }
+        let toIndexNB = CaltrainStops.northbound.firstIndex { $0.stopCode == to }
+
+        if let fromIdx = fromIndexNB, let toIdx = toIndexNB {
+            return toIdx > fromIdx ? 0 : 1  // 0 = northbound (toward SF), 1 = southbound
+        }
+        return 0 // Default northbound
     }
 }
 
