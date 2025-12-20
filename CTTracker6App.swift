@@ -1221,17 +1221,10 @@ struct TrainsScreen: View {
                     }
                     .buttonStyle(.borderedProminent)
 
-                    DatePicker("", selection: $refDate, displayedComponents: [.hourAndMinute])
+                    DatePicker("", selection: $refDate, displayedComponents: [.date, .hourAndMinute])
                         .labelsHidden()
-                        .fixedSize()
-                        .onChange(of: refDate) { oldDate, newDate in
-                            // If selected time is more than 5 minutes in the past, assume user means tomorrow
-                            let fiveMinutesAgo = Date().addingTimeInterval(-300)
-                            if newDate < fiveMinutesAgo {
-                                if let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: newDate) {
-                                    refDate = tomorrow
-                                }
-                            }
+                        .onChange(of: refDate) { _, _ in
+                            Task { await load() }
                         }
 
                     Button("Now") { refDate = Date() }
@@ -1395,15 +1388,33 @@ struct TrainsScreen: View {
         debugLog("🔍 Loading trains - Northbound code: \(northboundStopCode), Southbound code: \(southboundStopCode)")
         debugLog("🔍 Northbound station: \(northboundStop.name), Southbound station: \(southboundStop.name)")
         do {
+            // Check if user selected a different day than today
+            var calendar = Calendar.current
+            calendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+            let selectedDay = calendar.startOfDay(for: refDate)
+            let today = calendar.startOfDay(for: Date())
+            let isDifferentDay = selectedDay != today
+
+            debugLog("🗓️ Selected: \(refDate.formatted(date: .abbreviated, time: .shortened)), Today: \(Date().formatted(date: .abbreviated, time: .shortened)), Different day? \(isDifferentDay)")
+
             // Load GTFS scheduled departures
             async let nbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: northboundStopCode, direction: 0, refDate: refDate, count: 3)
             async let sbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: southboundStopCode, direction: 1, refDate: refDate, count: 3)
 
-            // Load SIRI real-time data for service types and delays
-            async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, to: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
-            async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, to: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
+            // Only load real-time data if looking at TODAY - real-time API doesn't know about other dates
+            let nRealtime: [Departure]
+            let sRealtime: [Departure]
+            if isDifferentDay {
+                debugLog("📆 Different day selected - skipping real-time API, using scheduled data only")
+                nRealtime = []
+                sRealtime = []
+            } else {
+                async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, to: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
+                async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, to: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
+                (nRealtime, sRealtime) = try await (nbRealtime, sbRealtime)
+            }
 
-            let (nScheduled, sScheduled, nRealtime, sRealtime) = try await (nbScheduled, sbScheduled, nbRealtime, sbRealtime)
+            let (nScheduled, sScheduled) = try await (nbScheduled, sbScheduled)
 
             debugLog("📅 GTFS Scheduled Northbound: \(nScheduled.count) trains")
             for (i, dep) in nScheduled.enumerated() {
@@ -4144,23 +4155,17 @@ actor GTFSService {
 
         let now = Date()
 
-        // Check if refDate time is in the past compared to now
+        // Use the actual date from refDate (DatePicker may have already set tomorrow's date)
+        // Extract just the date portion to determine which day's schedule to check
+        let targetDate = pacificCalendar.startOfDay(for: refDate)
+
+        // Check if we're looking at a future day (to include early morning trains from day after)
+        let todayStart = pacificCalendar.startOfDay(for: now)
+        let isNextDay = targetDate > todayStart
+
+        // Get reference time in minutes for filtering departures
         let refComponents = pacificCalendar.dateComponents([.hour, .minute], from: refDate)
-        let nowComponents = pacificCalendar.dateComponents([.hour, .minute], from: now)
         let refMinutes = (refComponents.hour ?? 0) * 60 + (refComponents.minute ?? 0)
-        let nowMinutes = (nowComponents.hour ?? 0) * 60 + (nowComponents.minute ?? 0)
-
-        // If selected time is before current time, assume user means tomorrow
-        let isNextDay = refMinutes < nowMinutes
-
-        // Use today or tomorrow based on whether the time is in the past
-        var targetDate = pacificCalendar.startOfDay(for: now)
-        if isNextDay {
-            guard let tomorrow = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) else {
-                throw NSError(domain: "GTFSService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Date calculation failed"])
-            }
-            targetDate = tomorrow
-        }
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
@@ -4170,13 +4175,19 @@ actor GTFSService {
         // Get weekday
         let weekday = pacificCalendar.component(.weekday, from: targetDate)
 
+        // Debug logging for date selection
+        let weekdayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        debugLog("📅 Schedule Query - Date: \(targetDateStr), Weekday: \(weekdayNames[weekday]) (\(weekday)), RefTime: \(refComponents.hour ?? 0):\(String(format: "%02d", refComponents.minute ?? 0))")
+
         // Find active services for target date
         let activeServices = getActiveServices(dateStr: targetDateStr, weekday: weekday)
+        debugLog("🚂 Active services for \(weekdayNames[weekday]): \(activeServices.sorted())")
 
         // Find trips for this direction and active services
         let relevantTrips = trips.filter { trip in
             trip.directionId == direction && activeServices.contains(trip.serviceId)
         }
+        debugLog("🎫 Found \(relevantTrips.count) trips for direction \(direction)")
 
         // Get stop times for these trips at our stop
         // Use Set for faster lookup and reduce memory usage
