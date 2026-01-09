@@ -51,7 +51,7 @@ enum AppConfig {
 
     // History Configuration
     enum History {
-        static let maxHistoryEntries = 500 // Maximum commute history entries to keep
+        static let maxHistoryEntries = 2000 // Maximum commute history entries to keep
     }
 }
 
@@ -1201,6 +1201,7 @@ struct TrainsScreen: View {
     @StateObject private var notificationManager = SmartNotificationManager.shared
     @State private var logoTapCount = 0
     @State private var showEasterEgg = false
+    @State private var showTimePickerSheet = false
 
     private var northboundStop: CaltrainStop {
         CaltrainStops.northbound.first { $0.stopCode == northboundStopCode } ?? CaltrainStops.defaultNorthbound
@@ -1221,11 +1222,17 @@ struct TrainsScreen: View {
                     }
                     .buttonStyle(.borderedProminent)
 
-                    DatePicker("", selection: $refDate, displayedComponents: [.date, .hourAndMinute])
-                        .labelsHidden()
-                        .onChange(of: refDate) { _, _ in
-                            Task { await load() }
+                    Button {
+                        showTimePickerSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(refDate.formatted(date: .omitted, time: .shortened))
+                                .font(.subheadline)
+                            Text(refDate.formatted(date: .abbreviated, time: .omitted))
+                                .font(.subheadline)
                         }
+                    }
+                    .buttonStyle(.bordered)
 
                     Button("Now") { refDate = Date() }
                         .buttonStyle(.bordered)
@@ -1375,6 +1382,15 @@ struct TrainsScreen: View {
                     destinationStopName: fullScheduleDestStopName
                 )
             }
+            .sheet(isPresented: $showTimePickerSheet) {
+                TimePickerSheetView(refDate: $refDate, showTimePickerSheet: $showTimePickerSheet)
+            }
+            .onChange(of: showTimePickerSheet, initial: false) { oldValue, newValue in
+                // Reload when sheet dismisses (newValue = false)
+                if oldValue && !newValue {
+                    Task { await load() }
+                }
+            }
         }
     }
 
@@ -1401,17 +1417,23 @@ struct TrainsScreen: View {
             async let nbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: northboundStopCode, direction: 0, refDate: refDate, count: 3)
             async let sbScheduled = GTFSService.shared.getScheduledDepartures(stopCode: southboundStopCode, direction: 1, refDate: refDate, count: 3)
 
-            // Only load real-time data if looking at TODAY - real-time API doesn't know about other dates
+            // Only load real-time data if looking at current time NOW
+            // SIRI API ignores the time parameter and always returns current departures
             let nRealtime: [Departure]
             let sRealtime: [Departure]
-            if isDifferentDay {
-                debugLog("📆 Different day selected - skipping real-time API, using scheduled data only")
-                nRealtime = []
-                sRealtime = []
-            } else {
+            let now = Date()
+            let timeDifferenceMinutes = abs(refDate.timeIntervalSince(now)) / 60
+            let isLookingAtCurrentTime = !isDifferentDay && timeDifferenceMinutes < 5 // Within 5 minutes of now
+
+            if isLookingAtCurrentTime {
+                debugLog("⏰ Looking at current time - using real-time SIRI API")
                 async let nbRealtime = SIRIService.nextDepartures(from: northboundStopCode, to: southboundStopCode, at: refDate, apiKey: key, expectedDirection: "N")
                 async let sbRealtime = SIRIService.nextDepartures(from: southboundStopCode, to: northboundStopCode, at: refDate, apiKey: key, expectedDirection: "S")
                 (nRealtime, sRealtime) = try await (nbRealtime, sbRealtime)
+            } else {
+                debugLog("📆 Looking at different time/day - skipping real-time API, using scheduled data only")
+                nRealtime = []
+                sRealtime = []
             }
 
             let (nScheduled, sScheduled) = try await (nbScheduled, sbScheduled)
@@ -1571,6 +1593,53 @@ struct ServiceAlertRow: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 4)
+    }
+}
+
+// MARK: - Time Picker Sheet
+struct TimePickerSheetView: View {
+    @Binding var refDate: Date
+    @Binding var showTimePickerSheet: Bool
+    @State private var tempDate: Date
+
+    init(refDate: Binding<Date>, showTimePickerSheet: Binding<Bool>) {
+        self._refDate = refDate
+        self._showTimePickerSheet = showTimePickerSheet
+        self._tempDate = State(initialValue: refDate.wrappedValue)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("Select Date & Time")
+                    .font(.headline)
+                    .padding(.top)
+
+                DatePicker("Time", selection: $tempDate, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .padding(.horizontal)
+
+                DatePicker("Date", selection: $tempDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .padding(.horizontal)
+
+                Spacer()
+            }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        refDate = tempDate
+                        showTimePickerSheet = false
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showTimePickerSheet = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
