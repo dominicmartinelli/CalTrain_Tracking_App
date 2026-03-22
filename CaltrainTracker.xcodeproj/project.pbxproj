@@ -3,19 +3,76 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		AA0000010000000000000001 /* CTTracker6App.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000001 /* CTTracker6App.swift */; };
 		AA0000030000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000020000000000000001 /* Assets.xcassets */; };
+		B68AB2552F35ACCC003C5364 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B68AB2542F35ACCC003C5364 /* WidgetKit.framework */; };
+		B68AB2572F35ACCC003C5364 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B68AB2562F35ACCC003C5364 /* SwiftUI.framework */; };
+		B68AB2682F35ACCD003C5364 /* CaltrainWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B68AB2522F35ACCB003C5364 /* CaltrainWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B68AB27B2F35AE17003C5364 /* SharedDeparture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB2782F35AE17003C5364 /* SharedDeparture.swift */; };
+		B68AB27C2F35AE17003C5364 /* SharedDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB2792F35AE17003C5364 /* SharedDataManager.swift */; };
+		B68AB27D2F35AE17003C5364 /* WidgetConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB27A2F35AE17003C5364 /* WidgetConstants.swift */; };
+		B68AB2812F35AE59003C5364 /* SharedDeparture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB27E2F35AE58003C5364 /* SharedDeparture.swift */; };
+		B68AB2822F35AE59003C5364 /* WidgetConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB27F2F35AE59003C5364 /* WidgetConstants.swift */; };
+		B68AB2832F35AE59003C5364 /* SharedDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68AB2802F35AE59003C5364 /* SharedDataManager.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B68AB2662F35ACCD003C5364 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA9999990000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B68AB2512F35ACCB003C5364;
+			remoteInfo = CaltrainWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B68AB2692F35ACCD003C5364 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B68AB2682F35ACCD003C5364 /* CaltrainWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000001 /* CTTracker6App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CTTracker6App.swift; sourceTree = "<group>"; };
 		AA0000020000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA1111110000000000000001 /* CaltrainTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CaltrainTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B68AB2522F35ACCB003C5364 /* CaltrainWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CaltrainWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B68AB2542F35ACCC003C5364 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		B68AB2562F35ACCC003C5364 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		B68AB2782F35AE17003C5364 /* SharedDeparture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedDeparture.swift; path = Shared/SharedDeparture.swift; sourceTree = "<group>"; };
+		B68AB2792F35AE17003C5364 /* SharedDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedDataManager.swift; path = Shared/SharedDataManager.swift; sourceTree = "<group>"; };
+		B68AB27A2F35AE17003C5364 /* WidgetConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WidgetConstants.swift; path = Shared/WidgetConstants.swift; sourceTree = "<group>"; };
+		B68AB27E2F35AE58003C5364 /* SharedDeparture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedDeparture.swift; path = Shared/SharedDeparture.swift; sourceTree = "<group>"; };
+		B68AB27F2F35AE59003C5364 /* WidgetConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WidgetConstants.swift; path = Shared/WidgetConstants.swift; sourceTree = "<group>"; };
+		B68AB2802F35AE59003C5364 /* SharedDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedDataManager.swift; path = Shared/SharedDataManager.swift; sourceTree = "<group>"; };
+		B68AB2842F35AE75003C5364 /* CaltrainTracker.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CaltrainTracker.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B68AB26C2F35ACCD003C5364 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B68AB2512F35ACCB003C5364 /* CaltrainWidgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		B68AB2582F35ACCC003C5364 /* CaltrainWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (B68AB26C2F35ACCD003C5364 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = CaltrainWidget; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AA2222220000000000000001 /* Frameworks */ = {
@@ -25,14 +82,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B68AB24F2F35ACCB003C5364 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B68AB2572F35ACCC003C5364 /* SwiftUI.framework in Frameworks */,
+				B68AB2552F35ACCC003C5364 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		AA3333330000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				B68AB2842F35AE75003C5364 /* CaltrainTracker.entitlements */,
+				B68AB2792F35AE17003C5364 /* SharedDataManager.swift */,
+				B68AB2802F35AE59003C5364 /* SharedDataManager.swift */,
+				B68AB2782F35AE17003C5364 /* SharedDeparture.swift */,
+				B68AB27A2F35AE17003C5364 /* WidgetConstants.swift */,
+				B68AB27E2F35AE58003C5364 /* SharedDeparture.swift */,
+				B68AB27F2F35AE59003C5364 /* WidgetConstants.swift */,
 				AA0000000000000000000001 /* CTTracker6App.swift */,
 				AA0000020000000000000001 /* Assets.xcassets */,
+				B68AB2582F35ACCC003C5364 /* CaltrainWidget */,
+				B68AB2532F35ACCB003C5364 /* Frameworks */,
 				AA4444440000000000000001 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +116,18 @@
 			isa = PBXGroup;
 			children = (
 				AA1111110000000000000001 /* CaltrainTracker.app */,
+				B68AB2522F35ACCB003C5364 /* CaltrainWidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B68AB2532F35ACCB003C5364 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B68AB2542F35ACCC003C5364 /* WidgetKit.framework */,
+				B68AB2562F35ACCC003C5364 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,15 +140,39 @@
 				AA7777770000000000000001 /* Sources */,
 				AA2222220000000000000001 /* Frameworks */,
 				AA8888880000000000000001 /* Resources */,
+				B68AB2692F35ACCD003C5364 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B68AB2672F35ACCD003C5364 /* PBXTargetDependency */,
 			);
 			name = CaltrainTracker;
 			productName = CaltrainTracker;
 			productReference = AA1111110000000000000001 /* CaltrainTracker.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B68AB2512F35ACCB003C5364 /* CaltrainWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B68AB26D2F35ACCD003C5364 /* Build configuration list for PBXNativeTarget "CaltrainWidgetExtension" */;
+			buildPhases = (
+				B68AB24E2F35ACCB003C5364 /* Sources */,
+				B68AB24F2F35ACCB003C5364 /* Frameworks */,
+				B68AB2502F35ACCB003C5364 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B68AB2582F35ACCC003C5364 /* CaltrainWidget */,
+			);
+			name = CaltrainWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = CaltrainWidgetExtension;
+			productReference = B68AB2522F35ACCB003C5364 /* CaltrainWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -72,11 +181,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1500;
+				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					AA5555550000000000000001 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					B68AB2512F35ACCB003C5364 = {
+						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
 			};
@@ -94,6 +206,7 @@
 			projectRoot = "";
 			targets = (
 				AA5555550000000000000001 /* CaltrainTracker */,
+				B68AB2512F35ACCB003C5364 /* CaltrainWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -107,6 +220,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B68AB2502F35ACCB003C5364 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -114,11 +234,32 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B68AB2812F35AE59003C5364 /* SharedDeparture.swift in Sources */,
+				B68AB2822F35AE59003C5364 /* WidgetConstants.swift in Sources */,
+				B68AB2832F35AE59003C5364 /* SharedDataManager.swift in Sources */,
 				AA0000010000000000000001 /* CTTracker6App.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B68AB24E2F35ACCB003C5364 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B68AB27B2F35AE17003C5364 /* SharedDeparture.swift in Sources */,
+				B68AB27C2F35AE17003C5364 /* SharedDataManager.swift in Sources */,
+				B68AB27D2F35AE17003C5364 /* WidgetConstants.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B68AB2672F35ACCD003C5364 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B68AB2512F35ACCB003C5364 /* CaltrainWidgetExtension */;
+			targetProxy = B68AB2662F35ACCD003C5364 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AABBBBBB0000000000000001 /* Debug */ = {
@@ -155,6 +296,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = CaltrainTracker.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
@@ -243,6 +385,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = CaltrainTracker.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
@@ -405,6 +548,79 @@
 			};
 			name = Release;
 		};
+		B68AB26A2F35ACCD003C5364 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4RQDL357NU;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CaltrainWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CaltrainWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.caltraintracker.app.CaltrainWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B68AB26B2F35ACCD003C5364 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4RQDL357NU;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CaltrainWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CaltrainWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.caltraintracker.app.CaltrainWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -422,6 +638,15 @@
 			buildConfigurations = (
 				AADDDDDD0000000000000001 /* Debug */,
 				AAEEEEEE0000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B68AB26D2F35ACCD003C5364 /* Build configuration list for PBXNativeTarget "CaltrainWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B68AB26A2F35ACCD003C5364 /* Debug */,
+				B68AB26B2F35ACCD003C5364 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

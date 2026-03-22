@@ -13,6 +13,7 @@ import Compression
 import UserNotifications
 import MessageUI
 import EventKit
+import WidgetKit
 
 // MARK: - Debug Configuration
 #if DEBUG
@@ -890,6 +891,16 @@ struct SettingsScreen: View {
                         }
                     }
 
+                    if homeStopCode == officeStopCode {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("Home and office stations must be different")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
                     Stepper(value: $commuteBufferMinutes, in: 5...60, step: 5) {
                         HStack {
                             Text("Commute Buffer")
@@ -1486,6 +1497,18 @@ struct TrainsScreen: View {
                 debugLog("  \(i+1). Train: \(dep.trainNumber ?? "nil"), Dest: \(dep.destination ?? "?"), Time: \(dep.depTime?.formatted(date: .omitted, time: .shortened) ?? "?"), Arrival: \(dep.arrivalTime?.formatted(date: .omitted, time: .shortened) ?? "nil"), Delay: \(delayStr)")
             }
 
+            // Cache departures for widget
+            let sharedNorth = north.map { SharedDeparture(from: $0) }
+            let sharedSouth = south.map { SharedDeparture(from: $0) }
+            SharedDataManager.shared.saveDepartures(
+                northbound: sharedNorth,
+                southbound: sharedSouth,
+                northStationName: northboundStop.name,
+                southStationName: southboundStop.name
+            )
+            WidgetCenter.shared.reloadAllTimelines()
+            debugLog("📱 Widget data cached and timelines reloaded")
+
             // Don't fetch alerts here - use shared alerts from main app to avoid duplicate API calls
 
             // Record usage history for pattern learning
@@ -1600,12 +1623,30 @@ struct ServiceAlertRow: View {
 struct TimePickerSheetView: View {
     @Binding var refDate: Date
     @Binding var showTimePickerSheet: Bool
-    @State private var tempDate: Date
+    @State private var selectedDate: Date
+    @State private var selectedTime: Date
 
     init(refDate: Binding<Date>, showTimePickerSheet: Binding<Bool>) {
         self._refDate = refDate
         self._showTimePickerSheet = showTimePickerSheet
-        self._tempDate = State(initialValue: refDate.wrappedValue)
+        // Initialize both date and time components separately
+        self._selectedDate = State(initialValue: refDate.wrappedValue)
+        self._selectedTime = State(initialValue: refDate.wrappedValue)
+    }
+
+    private func combinedDateTime() -> Date {
+        var pacificCalendar = Calendar.current
+        pacificCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? TimeZone.current
+        let dateComponents = pacificCalendar.dateComponents([.year, .month, .day], from: selectedDate)
+        let timeComponents = pacificCalendar.dateComponents([.hour, .minute], from: selectedTime)
+        var combined = DateComponents()
+        combined.year = dateComponents.year
+        combined.month = dateComponents.month
+        combined.day = dateComponents.day
+        combined.hour = timeComponents.hour
+        combined.minute = timeComponents.minute
+        combined.timeZone = TimeZone(identifier: "America/Los_Angeles")
+        return pacificCalendar.date(from: combined) ?? selectedDate
     }
 
     var body: some View {
@@ -1615,11 +1656,12 @@ struct TimePickerSheetView: View {
                     .font(.headline)
                     .padding(.top)
 
-                DatePicker("Time", selection: $tempDate, displayedComponents: .hourAndMinute)
+                DatePicker("Time", selection: $selectedTime, displayedComponents: .hourAndMinute)
                     .datePickerStyle(.wheel)
+                    .labelsHidden()
                     .padding(.horizontal)
 
-                DatePicker("Date", selection: $tempDate, displayedComponents: .date)
+                DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .padding(.horizontal)
 
@@ -1628,7 +1670,7 @@ struct TimePickerSheetView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        refDate = tempDate
+                        refDate = combinedDateTime()
                         showTimePickerSheet = false
                     }
                 }
@@ -1872,7 +1914,7 @@ struct DepartureRow: View {
 
         var message = "Train Arrival Update:\n"
         message += "Arrival time: \(arrTimeStr)\n\n"
-        message += "Isn't this so awesome! You got to love my brillance."
+        message += "Isn't this so awesome! You got to love my brilliance."
 
         return message
     }
@@ -2112,7 +2154,7 @@ struct EventsScreen: View {
     }
 
     private var filteredEvents: [BayAreaEvent] {
-        #if !DEBUG
+        #if DEBUG
         debugLog("🎟️ Filtering \(events.count) total events")
         #endif
 
@@ -2120,7 +2162,7 @@ struct EventsScreen: View {
         let largeEvents: [BayAreaEvent]
         if showAllCapacities {
             largeEvents = events
-            #if !DEBUG
+            #if DEBUG
             debugLog("🎟️ Showing all capacities: \(largeEvents.count) events")
             #endif
         } else {
@@ -2150,20 +2192,20 @@ struct EventsScreen: View {
                 }
 
                 guard let capacity = event.venueCapacity else {
-                    #if !DEBUG
+                    #if DEBUG
                     debugLog("🎟️ Event '\(event.name)' filtered out: no capacity data")
                     #endif
                     return false
                 }
                 let isLarge = capacity >= AppConfig.Events.largeVenueCapacityThreshold
                 if !isLarge {
-                    #if !DEBUG
+                    #if DEBUG
                     debugLog("🎟️ Event '\(event.name)' filtered out: capacity \(capacity) < \(AppConfig.Events.largeVenueCapacityThreshold)")
                     #endif
                 }
                 return isLarge
             }
-            #if !DEBUG
+            #if DEBUG
             debugLog("🎟️ After capacity filter: \(largeEvents.count) events")
             #endif
         }
@@ -2173,26 +2215,26 @@ struct EventsScreen: View {
             // Show events within maxDistance of ANY Caltrain station
             let filtered = largeEvents.filter { event in
                 guard let nearest = event.nearestStation else {
-                    #if !DEBUG
+                    #if DEBUG
                     debugLog("🎟️ Event '\(event.name)' filtered out: no nearest station")
                     #endif
                     return false
                 }
                 let withinRange = nearest.distance <= maxDistance
                 if !withinRange {
-                    #if !DEBUG
+                    #if DEBUG
                     debugLog("🎟️ Event '\(event.name)' filtered out: \(String(format: "%.1f", nearest.distance)) mi from \(nearest.station.name) > \(String(format: "%.1f", maxDistance)) mi")
                     #endif
                 }
                 return withinRange
             }
-            #if !DEBUG
+            #if DEBUG
             debugLog("🎟️ After distance filter: \(filtered.count) events")
             #endif
 
             // Deduplicate: only show one event per venue if same name
             let deduplicated = deduplicateEvents(filtered)
-            #if !DEBUG
+            #if DEBUG
             debugLog("🎟️ After deduplication: \(deduplicated.count) events")
             #endif
             return deduplicated
@@ -2202,13 +2244,13 @@ struct EventsScreen: View {
             guard let nearest = event.nearestStation else { return false }
             return nearest.station.name == selectedStation && nearest.distance <= maxDistance
         }
-        #if !DEBUG
+        #if DEBUG
         debugLog("🎟️ After station filter: \(filtered.count) events")
         #endif
 
         // Deduplicate: only show one event per venue if same name
         let deduplicated = deduplicateEvents(filtered)
-        #if !DEBUG
+        #if DEBUG
         debugLog("🎟️ After deduplication: \(deduplicated.count) events")
         #endif
         return deduplicated
@@ -2256,7 +2298,7 @@ struct EventsScreen: View {
                 seen.insert(key)
                 unique.append(event)
             } else {
-                #if !DEBUG
+                #if DEBUG
                 debugLog("🎟️ Duplicate filtered: '\(event.name)' (base: '\(baseName)')")
                 #endif
             }
@@ -2514,6 +2556,23 @@ struct CalendarScreen: View {
                                     .foregroundStyle(.white)
                                     .cornerRadius(10)
                             }
+                        }
+                        .padding()
+                    } else if homeStopCode == officeStopCode {
+                        // Validation error: same station
+                        VStack(spacing: 16) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 60))
+                                .foregroundStyle(.orange)
+
+                            Text("Configuration Needed")
+                                .font(.title2)
+                                .fontWeight(.bold)
+
+                            Text("Home and office stations must be different. Please update your stations in Settings → Calendar Commute Settings.")
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal)
                         }
                         .padding()
                     } else if loading {
@@ -2960,65 +3019,67 @@ struct CaltrainStop: Identifiable, Codable, Hashable {
 // All available Caltrain stops
 struct CaltrainStops {
     // Northbound stops (toward San Francisco) - odd numbered stop codes
+    // Stop codes match current Caltrain GTFS (updated for 2024 electrification)
     static let northbound: [CaltrainStop] = [
-        CaltrainStop(name: "Gilroy", stopCode: "777403", latitude: 37.0035, longitude: -121.5682),
-        CaltrainStop(name: "San Martin", stopCode: "777402", latitude: 37.0855, longitude: -121.6106),
-        CaltrainStop(name: "Morgan Hill", stopCode: "777401", latitude: 37.1295, longitude: -121.6503),
-        CaltrainStop(name: "Blossom Hill", stopCode: "70007", latitude: 37.2524, longitude: -121.7983),
-        CaltrainStop(name: "Capitol", stopCode: "70005", latitude: 37.2894, longitude: -121.8421),
-        CaltrainStop(name: "Tamien", stopCode: "70003", latitude: 37.3119, longitude: -121.8841),
+        CaltrainStop(name: "Gilroy", stopCode: "70321", latitude: 37.0035, longitude: -121.5682),
+        CaltrainStop(name: "San Martin", stopCode: "70311", latitude: 37.0855, longitude: -121.6106),
+        CaltrainStop(name: "Morgan Hill", stopCode: "70301", latitude: 37.1295, longitude: -121.6503),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70291", latitude: 37.2524, longitude: -121.7983),
+        CaltrainStop(name: "Capitol", stopCode: "70281", latitude: 37.2894, longitude: -121.8421),
+        CaltrainStop(name: "Tamien", stopCode: "70271", latitude: 37.3119, longitude: -121.8841),
         CaltrainStop(name: "San Jose Diridon", stopCode: "70261", latitude: 37.3297, longitude: -121.9026),
-        CaltrainStop(name: "Santa Clara", stopCode: "70271", latitude: 37.3530, longitude: -121.9364),
-        CaltrainStop(name: "Lawrence", stopCode: "70281", latitude: 37.3705, longitude: -121.9972),
-        CaltrainStop(name: "Sunnyvale", stopCode: "70291", latitude: 37.3784, longitude: -122.0309),
+        CaltrainStop(name: "Santa Clara", stopCode: "70241", latitude: 37.3530, longitude: -121.9364),
+        CaltrainStop(name: "Lawrence", stopCode: "70231", latitude: 37.3705, longitude: -121.9972),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70221", latitude: 37.3784, longitude: -122.0309),
         CaltrainStop(name: "Mountain View", stopCode: "70211", latitude: 37.3942, longitude: -122.0764),
-        CaltrainStop(name: "San Antonio", stopCode: "70221", latitude: 37.4074, longitude: -122.1070),
-        CaltrainStop(name: "California Ave", stopCode: "70231", latitude: 37.4294, longitude: -122.1426),
-        CaltrainStop(name: "Palo Alto", stopCode: "70241", latitude: 37.4429, longitude: -122.1649),
-        CaltrainStop(name: "Menlo Park", stopCode: "70251", latitude: 37.4546, longitude: -122.1824),
-        CaltrainStop(name: "Redwood City", stopCode: "70311", latitude: 37.4854, longitude: -122.2317),
-        CaltrainStop(name: "San Carlos", stopCode: "70321", latitude: 37.5071, longitude: -122.2604),
-        CaltrainStop(name: "Belmont", stopCode: "70331", latitude: 37.5206, longitude: -122.2756),
-        CaltrainStop(name: "Hillsdale", stopCode: "70341", latitude: 37.5378, longitude: -122.2977),
-        CaltrainStop(name: "San Mateo", stopCode: "70351", latitude: 37.5683, longitude: -122.3238),
-        CaltrainStop(name: "Burlingame", stopCode: "70361", latitude: 37.5797, longitude: -122.3449),
-        CaltrainStop(name: "Millbrae", stopCode: "70371", latitude: 37.5996, longitude: -122.3868),
-        CaltrainStop(name: "San Bruno", stopCode: "70381", latitude: 37.6308, longitude: -122.4112),
-        CaltrainStop(name: "South San Francisco", stopCode: "70011", latitude: 37.6566, longitude: -122.4056),
+        CaltrainStop(name: "San Antonio", stopCode: "70201", latitude: 37.4074, longitude: -122.1070),
+        CaltrainStop(name: "California Ave", stopCode: "70191", latitude: 37.4294, longitude: -122.1426),
+        CaltrainStop(name: "Palo Alto", stopCode: "70171", latitude: 37.4429, longitude: -122.1649),
+        CaltrainStop(name: "Menlo Park", stopCode: "70161", latitude: 37.4546, longitude: -122.1824),
+        CaltrainStop(name: "Redwood City", stopCode: "70141", latitude: 37.4854, longitude: -122.2317),
+        CaltrainStop(name: "San Carlos", stopCode: "70131", latitude: 37.5071, longitude: -122.2604),
+        CaltrainStop(name: "Belmont", stopCode: "70121", latitude: 37.5206, longitude: -122.2756),
+        CaltrainStop(name: "Hillsdale", stopCode: "70111", latitude: 37.5378, longitude: -122.2977),
+        CaltrainStop(name: "San Mateo", stopCode: "70091", latitude: 37.5683, longitude: -122.3238),
+        CaltrainStop(name: "Burlingame", stopCode: "70081", latitude: 37.5797, longitude: -122.3449),
+        CaltrainStop(name: "Millbrae", stopCode: "70061", latitude: 37.5996, longitude: -122.3868),
+        CaltrainStop(name: "San Bruno", stopCode: "70051", latitude: 37.6308, longitude: -122.4112),
+        CaltrainStop(name: "South San Francisco", stopCode: "70041", latitude: 37.6566, longitude: -122.4056),
         CaltrainStop(name: "Bayshore", stopCode: "70031", latitude: 37.7097, longitude: -122.4016),
         CaltrainStop(name: "22nd Street", stopCode: "70021", latitude: 37.7571, longitude: -122.3924),
-        CaltrainStop(name: "San Francisco", stopCode: "70041", latitude: 37.7765, longitude: -122.3947)
+        CaltrainStop(name: "San Francisco", stopCode: "70011", latitude: 37.7765, longitude: -122.3947)
     ]
 
     // Southbound stops (toward San Jose) - even numbered stop codes
+    // Stop codes match current Caltrain GTFS (updated for 2024 electrification)
     static let southbound: [CaltrainStop] = [
-        CaltrainStop(name: "San Francisco", stopCode: "70042", latitude: 37.7765, longitude: -122.3947),
+        CaltrainStop(name: "San Francisco", stopCode: "70012", latitude: 37.7765, longitude: -122.3947),
         CaltrainStop(name: "22nd Street", stopCode: "70022", latitude: 37.7571, longitude: -122.3924),
         CaltrainStop(name: "Bayshore", stopCode: "70032", latitude: 37.7097, longitude: -122.4016),
-        CaltrainStop(name: "South San Francisco", stopCode: "70012", latitude: 37.6566, longitude: -122.4056),
-        CaltrainStop(name: "San Bruno", stopCode: "70382", latitude: 37.6308, longitude: -122.4112),
-        CaltrainStop(name: "Millbrae", stopCode: "70372", latitude: 37.5996, longitude: -122.3868),
-        CaltrainStop(name: "Burlingame", stopCode: "70362", latitude: 37.5797, longitude: -122.3449),
-        CaltrainStop(name: "San Mateo", stopCode: "70352", latitude: 37.5683, longitude: -122.3238),
-        CaltrainStop(name: "Hillsdale", stopCode: "70342", latitude: 37.5378, longitude: -122.2977),
-        CaltrainStop(name: "Belmont", stopCode: "70332", latitude: 37.5206, longitude: -122.2756),
-        CaltrainStop(name: "San Carlos", stopCode: "70322", latitude: 37.5071, longitude: -122.2604),
-        CaltrainStop(name: "Redwood City", stopCode: "70312", latitude: 37.4854, longitude: -122.2317),
-        CaltrainStop(name: "Menlo Park", stopCode: "70252", latitude: 37.4546, longitude: -122.1824),
-        CaltrainStop(name: "Palo Alto", stopCode: "70242", latitude: 37.4429, longitude: -122.1649),
-        CaltrainStop(name: "California Ave", stopCode: "70232", latitude: 37.4294, longitude: -122.1426),
-        CaltrainStop(name: "San Antonio", stopCode: "70222", latitude: 37.4074, longitude: -122.1070),
+        CaltrainStop(name: "South San Francisco", stopCode: "70042", latitude: 37.6566, longitude: -122.4056),
+        CaltrainStop(name: "San Bruno", stopCode: "70052", latitude: 37.6308, longitude: -122.4112),
+        CaltrainStop(name: "Millbrae", stopCode: "70062", latitude: 37.5996, longitude: -122.3868),
+        CaltrainStop(name: "Burlingame", stopCode: "70082", latitude: 37.5797, longitude: -122.3449),
+        CaltrainStop(name: "San Mateo", stopCode: "70092", latitude: 37.5683, longitude: -122.3238),
+        CaltrainStop(name: "Hillsdale", stopCode: "70112", latitude: 37.5378, longitude: -122.2977),
+        CaltrainStop(name: "Belmont", stopCode: "70122", latitude: 37.5206, longitude: -122.2756),
+        CaltrainStop(name: "San Carlos", stopCode: "70132", latitude: 37.5071, longitude: -122.2604),
+        CaltrainStop(name: "Redwood City", stopCode: "70142", latitude: 37.4854, longitude: -122.2317),
+        CaltrainStop(name: "Menlo Park", stopCode: "70162", latitude: 37.4546, longitude: -122.1824),
+        CaltrainStop(name: "Palo Alto", stopCode: "70172", latitude: 37.4429, longitude: -122.1649),
+        CaltrainStop(name: "California Ave", stopCode: "70192", latitude: 37.4294, longitude: -122.1426),
+        CaltrainStop(name: "San Antonio", stopCode: "70202", latitude: 37.4074, longitude: -122.1070),
         CaltrainStop(name: "Mountain View", stopCode: "70212", latitude: 37.3942, longitude: -122.0764),
-        CaltrainStop(name: "Sunnyvale", stopCode: "70292", latitude: 37.3784, longitude: -122.0309),
-        CaltrainStop(name: "Lawrence", stopCode: "70282", latitude: 37.3705, longitude: -121.9972),
-        CaltrainStop(name: "Santa Clara", stopCode: "70272", latitude: 37.3530, longitude: -121.9364),
+        CaltrainStop(name: "Sunnyvale", stopCode: "70222", latitude: 37.3784, longitude: -122.0309),
+        CaltrainStop(name: "Lawrence", stopCode: "70232", latitude: 37.3705, longitude: -121.9972),
+        CaltrainStop(name: "Santa Clara", stopCode: "70242", latitude: 37.3530, longitude: -121.9364),
         CaltrainStop(name: "San Jose Diridon", stopCode: "70262", latitude: 37.3297, longitude: -121.9026),
-        CaltrainStop(name: "Tamien", stopCode: "70004", latitude: 37.3119, longitude: -121.8841),
-        CaltrainStop(name: "Capitol", stopCode: "70006", latitude: 37.2894, longitude: -121.8421),
-        CaltrainStop(name: "Blossom Hill", stopCode: "70008", latitude: 37.2524, longitude: -121.7983),
-        CaltrainStop(name: "Morgan Hill", stopCode: "777400", latitude: 37.1295, longitude: -121.6503),
-        CaltrainStop(name: "San Martin", stopCode: "777405", latitude: 37.0855, longitude: -121.6106),
-        CaltrainStop(name: "Gilroy", stopCode: "777404", latitude: 37.0035, longitude: -121.5682)
+        CaltrainStop(name: "Tamien", stopCode: "70272", latitude: 37.3119, longitude: -121.8841),
+        CaltrainStop(name: "Capitol", stopCode: "70282", latitude: 37.2894, longitude: -121.8421),
+        CaltrainStop(name: "Blossom Hill", stopCode: "70292", latitude: 37.2524, longitude: -121.7983),
+        CaltrainStop(name: "Morgan Hill", stopCode: "70302", latitude: 37.1295, longitude: -121.6503),
+        CaltrainStop(name: "San Martin", stopCode: "70312", latitude: 37.0855, longitude: -121.6106),
+        CaltrainStop(name: "Gilroy", stopCode: "70322", latitude: 37.0035, longitude: -121.5682)
     ]
 
     // Default stops (Mountain View northbound and 22nd Street southbound)
@@ -3062,6 +3123,23 @@ struct Departure: Identifiable, Hashable {
     let trainNumber: String?
     let arrivalTime: Date?
     let delayMinutes: Int? // positive = late, negative = early, nil = no real-time data
+}
+
+// MARK: - Widget Data Conversion
+extension SharedDeparture {
+    /// Initialize from main app's Departure model
+    init(from departure: Departure) {
+        self.init(
+            journeyRef: departure.journeyRef,
+            minutes: departure.minutes,
+            depTime: departure.depTime,
+            direction: departure.direction,
+            destination: departure.destination,
+            trainNumber: departure.trainNumber,
+            arrivalTime: departure.arrivalTime,
+            delayMinutes: departure.delayMinutes
+        )
+    }
 }
 
 struct ServiceAlert: Identifiable, Hashable {
@@ -3171,7 +3249,7 @@ struct CommuteHistoryEntry: Codable, Identifiable {
 }
 
 struct CommutePattern: Codable, Identifiable {
-    var id: String { "\(fromStopCode)-\(toStopCode)-\(direction)" }
+    var id: String { "\(fromStopCode)::\(toStopCode)::\(direction)" }
     let fromStopCode: String
     let toStopCode: String
     let direction: String
@@ -3273,8 +3351,15 @@ struct GameStats: Codable {
 class GamificationManager {
     static let shared = GamificationManager()
     private let statsKey = "gameStats"
+    private let queue = DispatchQueue(label: "com.caltrainchecker.gamification", attributes: .concurrent)
 
     func loadStats() -> GameStats {
+        queue.sync {
+            return loadStatsUnsafe()
+        }
+    }
+
+    private func loadStatsUnsafe() -> GameStats {
         guard let data = UserDefaults.standard.data(forKey: statsKey),
               let stats = try? JSONDecoder().decode(GameStats.self, from: data) else {
             return createInitialStats()
@@ -3297,45 +3382,57 @@ class GamificationManager {
         return stats
     }
 
-    func saveStats(_ stats: GameStats) {
+    private func saveStatsUnsafe(_ stats: GameStats) {
         if let data = try? JSONEncoder().encode(stats) {
             UserDefaults.standard.set(data, forKey: statsKey)
         }
     }
 
+    func saveStats(_ stats: GameStats) {
+        queue.async(flags: .barrier) {
+            self.saveStatsUnsafe(stats)
+        }
+    }
+
     func recordTrip(timestamp: Date = Date()) -> (stats: GameStats, newAchievements: [Achievement]) {
-        var stats = loadStats()
-        var newlyUnlocked: [Achievement] = []
+        // Use barrier to ensure thread-safe read-modify-write
+        return queue.sync(flags: .barrier) {
+            var stats = loadStatsUnsafe()
+            var newlyUnlocked: [Achievement] = []
 
-        // Update total trips
-        stats.totalTrips += 1
+            // Update total trips
+            stats.totalTrips += 1
 
-        // Update streak
-        let calendar = Calendar.current
-        if let lastTrip = stats.lastTripDate {
-            let daysSinceLastTrip = calendar.dateComponents([.day], from: lastTrip, to: timestamp).day ?? 0
+            // Update streak - compare calendar days, not raw timestamps
+            let calendar = Calendar.current
+            let todayStart = calendar.startOfDay(for: timestamp)
 
-            if daysSinceLastTrip == 1 {
-                // Consecutive day
-                stats.currentStreak += 1
-            } else if daysSinceLastTrip > 1 {
-                // Streak broken
+            if let lastTrip = stats.lastTripDate {
+                let lastTripDay = calendar.startOfDay(for: lastTrip)
+                let daysSinceLastTrip = calendar.dateComponents([.day], from: lastTripDay, to: todayStart).day ?? 0
+
+                if daysSinceLastTrip == 1 {
+                    // Consecutive day
+                    stats.currentStreak += 1
+                } else if daysSinceLastTrip > 1 {
+                    // Streak broken
+                    stats.currentStreak = 1
+                }
+                // Same day (daysSinceLastTrip == 0) = no change to streak
+            } else {
+                // First trip ever
                 stats.currentStreak = 1
             }
-            // Same day = no change to streak
-        } else {
-            // First trip ever
-            stats.currentStreak = 1
+
+            stats.longestStreak = max(stats.longestStreak, stats.currentStreak)
+            stats.lastTripDate = timestamp
+
+            // Check for newly unlocked achievements
+            newlyUnlocked = checkAchievements(&stats, timestamp: timestamp)
+
+            saveStatsUnsafe(stats)
+            return (stats, newlyUnlocked)
         }
-
-        stats.longestStreak = max(stats.longestStreak, stats.currentStreak)
-        stats.lastTripDate = timestamp
-
-        // Check for newly unlocked achievements
-        newlyUnlocked = checkAchievements(&stats, timestamp: timestamp)
-
-        saveStats(stats)
-        return (stats, newlyUnlocked)
     }
 
     private func checkAchievements(_ stats: inout GameStats, timestamp: Date) -> [Achievement] {
@@ -3471,10 +3568,10 @@ class CommuteHistoryStorage {
         let history = loadHistory()
         guard !history.isEmpty else { return [] }
 
-        // Group by route (from-to-direction)
+        // Group by route (from-to-direction) using "::" as safe delimiter
         var routeCounts: [String: [CommuteHistoryEntry]] = [:]
         for entry in history {
-            let key = "\(entry.fromStopCode)-\(entry.toStopCode)-\(entry.direction)"
+            let key = "\(entry.fromStopCode)::\(entry.toStopCode)::\(entry.direction)"
             routeCounts[key, default: []].append(entry)
         }
 
@@ -3482,7 +3579,7 @@ class CommuteHistoryStorage {
         return routeCounts.compactMap { key, entries in
             guard entries.count >= 3 else { return nil }
 
-            let parts = key.split(separator: "-")
+            let parts = key.components(separatedBy: "::")
             guard parts.count == 3 else { return nil }
 
             // Find common hours (hours when this route is checked most)
@@ -3493,9 +3590,9 @@ class CommuteHistoryStorage {
                 .map { $0.key }
 
             return CommutePattern(
-                fromStopCode: String(parts[0]),
-                toStopCode: String(parts[1]),
-                direction: String(parts[2]),
+                fromStopCode: parts[0],
+                toStopCode: parts[1],
+                direction: parts[2],
                 commonHours: hourCounts,
                 frequency: entries.count,
                 lastUsed: entries.map { $0.timestamp }.max() ?? Date()
@@ -3538,14 +3635,16 @@ class CommuteHistoryStorage {
         }
         let weekHistory = history.filter { $0.timestamp >= weekAgo }
 
-        let routeCounts = Dictionary(grouping: weekHistory, by: { "\($0.fromStopCode)-\($0.toStopCode)" })
+        // Use "::" as safe delimiter (won't appear in stop codes)
+        let routeCounts = Dictionary(grouping: weekHistory, by: { "\($0.fromStopCode)::\($0.toStopCode)" })
             .mapValues { $0.count }
             .sorted { $0.value > $1.value }
 
         let mostCommon = routeCounts.first.map { from_to, _ in
-            let parts = from_to.split(separator: "-")
-            let fromName = CaltrainStops.northbound.first { $0.stopCode == String(parts[0]) }?.name ?? "Unknown"
-            let toName = CaltrainStops.northbound.first { $0.stopCode == String(parts[1]) }?.name ?? "Unknown"
+            let parts = from_to.components(separatedBy: "::")
+            guard parts.count == 2 else { return "Unknown → Unknown" }
+            let fromName = CaltrainStops.northbound.first { $0.stopCode == parts[0] }?.name ?? "Unknown"
+            let toName = CaltrainStops.northbound.first { $0.stopCode == parts[1] }?.name ?? "Unknown"
             return "\(fromName) → \(toName)"
         }
 
@@ -4277,21 +4376,22 @@ actor GTFSService {
 
             var departureDate = targetDate
             var actualHours = hours
-            var totalMinutes = hours * 60 + minutes
+            let totalMinutes = hours * 60 + minutes
 
             // Handle times >= 24:00:00 (next day in GTFS format)
             if hours >= 24 {
                 actualHours = hours - 24
-                totalMinutes = actualHours * 60 + minutes
                 guard let nextDay = pacificCalendar.date(byAdding: .day, value: 1, to: targetDate) else {
                     continue
                 }
                 departureDate = nextDay
-            }
-
-            // Filter by selected time (refMinutes) regardless of which day
-            if totalMinutes < refMinutes {
-                continue // Skip trains before selected time
+                // 24+ hour trains always depart the next calendar day, so they are
+                // always after any same-day refMinutes (max 1439). No filter needed.
+            } else {
+                // Filter same-day trains: skip those before the selected reference time
+                if totalMinutes < refMinutes {
+                    continue
+                }
             }
 
             // Create full departure Date using Calendar API
@@ -4761,12 +4861,14 @@ struct GTFSTranslatedString: Codable {
 
     init(from decoder: Decoder) throws {
         // Try "Translations" (plural) first - this is what 511.org uses
-        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
-            Translation = try? container.decode([GTFSTranslation].self, forKey: .Translation)
+        if let container = try? decoder.container(keyedBy: CodingKeys.self),
+           let translations = try? container.decode([GTFSTranslation].self, forKey: .Translation) {
+            Translation = translations
         }
-        // Try snake_case singular
-        else if let container = try? decoder.container(keyedBy: SnakeCaseKeys.self) {
-            Translation = try? container.decode([GTFSTranslation].self, forKey: .translation)
+        // Try snake_case singular as fallback
+        else if let container = try? decoder.container(keyedBy: SnakeCaseKeys.self),
+                let translations = try? container.decode([GTFSTranslation].self, forKey: .translation) {
+            Translation = translations
         } else {
             Translation = nil
         }
@@ -5257,7 +5359,7 @@ struct TicketmasterService {
             throw NSError(domain: "Ticketmaster", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to construct URL"])
         }
         let dateString = DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none)
-        #if !DEBUG
+        #if DEBUG
         debugLog("🎟️ Fetching Ticketmaster events for \(dateString) (\(startDateTime) to \(endDateTime))")
         #endif
         debugLog("🎟️ URL: \(url.host ?? "unknown")\(url.path)")
@@ -5279,7 +5381,7 @@ struct TicketmasterService {
             }
             guard let embedded = json["_embedded"] as? [String: Any],
                   let eventsArray = embedded["events"] as? [[String: Any]] else {
-                #if !DEBUG
+                #if DEBUG
                 debugLog("🎟️ No events found in response")
                 #endif
                 return []
@@ -5348,7 +5450,7 @@ struct TicketmasterService {
                 events.append(event)
             }
 
-            #if !DEBUG
+            #if DEBUG
             debugLog("🎟️ Found \(events.count) events")
             #endif
             return events
